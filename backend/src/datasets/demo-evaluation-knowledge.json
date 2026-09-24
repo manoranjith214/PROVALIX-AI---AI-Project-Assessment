@@ -1,0 +1,85 @@
+{
+  "datasetName": "Provalix AI Platform Evaluation Guidelines",
+  "datasetType": "DEMO KNOWLEDGE DATA",
+  "version": "1.0-DEMO",
+  "description": "Clearly marked DEMO dataset containing generic Provalix project evaluation criteria, plagiarism policies, and viva guidelines. For demonstration only.",
+  "records": [
+    {
+      "id": "DEMO-KB-001",
+      "title": "Problem Definition & Scope Guidelines",
+      "category": "Project Evaluation Criteria",
+      "content": "Problem Definition evaluates the clarity, real-world relevance, and motivation of the project. Max Score: 15 marks. High scores require identifying clear beneficiaries, explaining current limitations of existing solutions, and scoping manageable boundaries with measurable target objectives.",
+      "source": "Provalix Evaluation Manual v1 (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-002",
+      "title": "Innovation & Novelty Criteria",
+      "category": "Project Evaluation Criteria",
+      "content": "Innovation & Novelty evaluates technical uniqueness and creative problem solving. Max Score: 20 marks. Evaluators assess whether the team combines technologies in a novel way, implements an unconventional algorithm, or significantly optimizes existing processes beyond standard open-source tutorials.",
+      "source": "Provalix Evaluation Manual v1 (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-003",
+      "title": "Technical Implementation & Architecture Guidelines",
+      "category": "Technical Implementation Guidelines",
+      "content": "Technical Implementation assesses architectural decoupling, design patterns, and engineering depth. Max Score: 20 marks. High marks require clean separation of concerns, robust state management, secure database schemas with relational constraints, and resilient asynchronous APIs.",
+      "source": "Provalix Engineering Standards (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-004",
+      "title": "Functionality & Working Prototype Standards",
+      "category": "Project Evaluation Criteria",
+      "content": "Functionality measures the operational readiness of core user journeys. Max Score: 15 marks. The project must have demonstrable user authentication, primary CRUD flows, verified inputs, and a working demo video or live URL without fatal crashes.",
+      "source": "Provalix Evaluation Manual v1 (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-005",
+      "title": "Code Quality & Clean Architecture Standards",
+      "category": "Code Quality Guidelines",
+      "content": "Code Quality evaluates readability, modularity, and error handling. Max Score: 10 marks. Submissions must adhere to strict typing (e.g. TypeScript), avoid monolithic controllers, eliminate dead code, format consistently, and implement structured HTTP error handling without leaking secrets.",
+      "source": "Provalix Code Review Protocol (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-006",
+      "title": "Documentation & Setup Guide Requirements",
+      "category": "Documentation Guidelines",
+      "content": "Documentation assesses README clarity, API documentation, and architecture diagrams. Max Score: 10 marks. A comprehensive submission includes setup commands, .env.example with placeholders, Swagger/OpenAPI schemas, and dependency rationale.",
+      "source": "Provalix Documentation Guidelines (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-007",
+      "title": "Overall Project Quality & Polish",
+      "category": "Project Evaluation Criteria",
+      "content": "Overall Project Quality assesses holistic integration, UI/UX polish, and deployment maturity. Max Score: 10 marks. It rewards defensive programming, responsive layouts, fast startup times, and adherence to production best practices.",
+      "source": "Provalix Evaluation Manual v1 (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-008",
+      "title": "Academic Plagiarism Policy & Score Deductions",
+      "category": "Plagiarism Guidelines",
+      "content": "Plagiarism does not form a separate score category; it acts as a deduction/modifier inside the AI evaluation score (Max 50 in Classrooms). Over 40% similarity results in a High severity penalty (up to 15 marks deduction). Over 20% results in a Moderate penalty (5 marks deduction). Standard library boilerplate is excluded from penalties.",
+      "source": "Provalix Integrity Committee (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-009",
+      "title": "Viva Voce Defense Guidelines & Structure",
+      "category": "Viva Guidelines",
+      "content": "Viva accounts for 25 marks across 5 standardized questions (5 marks each): 1. Architecture & Scalability, 2. Core Problem & Novelty, 3. Security & Error Handling, 4. Data Modeling & Schema Constraints, 5. Testing & Future Enhancements. Statuses can be Completed, Incomplete, or Absent.",
+      "source": "Faculty Examination Protocol (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-010",
+      "title": "Phased Project Improvement Methodology",
+      "category": "Project Improvement Guidelines",
+      "content": "Improvement plans must be categorized into High, Medium, and Low priorities. High priority covers security vulnerabilities, failing core features, and critical schema flaws. Medium priority addresses test coverage and caching. Low priority covers documentation styling and minor UI polish.",
+      "source": "Provalix Mentorship Handbook (DEMO KNOWLEDGE DATA)"
+    },
+    {
+      "id": "DEMO-KB-011",
+      "title": "Frequently Asked Questions (FAQ) - Evaluation & Privacy",
+      "category": "Frequently Asked Questions",
+      "content": "Q: Can other students see my detailed score feedback? A: No. The Provalix Leaderboard only displays student names/teams and final scores. Detailed criteria, AI feedback, and evaluator notes are visible only to you, your team, and the classroom evaluators/owners.",
+      "source": "Provalix Student Portal FAQ (DEMO KNOWLEDGE DATA)"
+    }
+  ]
+}

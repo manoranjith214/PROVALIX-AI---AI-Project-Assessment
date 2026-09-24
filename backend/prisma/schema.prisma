@@ -1,0 +1,613 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                    String                   @id @default(uuid())
+  permanentId           String                   @unique // e.g. PRV-10482
+  email                 String                   @unique
+  passwordHash          String
+  name                  String
+  department            String?
+  year                  String?
+  college               String?
+  profileImage          String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  refreshTokens         RefreshToken[]
+  passwordResetTokens   PasswordResetToken[]
+  captainOfTeams        Team[]                   @relation("TeamCaptain")
+  createdTeams          Team[]                   @relation("TeamCreator")
+  teamMemberships       TeamMember[]
+  teamInvitations       TeamInvitation[]
+  ownedClassrooms       Classroom[]              @relation("ClassroomOwner")
+  classroomMemberships  ClassroomMember[]
+  classroomInvitations  ClassroomInvitation[]
+  evaluatorAssignments ClassroomEvaluator[]     @relation("EvaluatorUser")
+  submissions           Submission[]             @relation("UserSubmissions")
+  assignedSubmissions   Submission[]             @relation("EvaluatorSubmissions")
+  verifiedSubmissions   Verification[]           @relation("VerifiedByUser")
+  facultyEvaluations    FacultyEvaluation[]      @relation("FacultyEvaluator")
+  projectCheckerProjects ProjectCheckerProject[]
+  notifications         Notification[]
+  chatConversations     ChatConversation[]
+
+  @@index([email])
+  @@index([permanentId])
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  token       String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  revoked     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id          String   @id @default(uuid())
+  token       String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  used        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([token])
+}
+
+model Team {
+  id          String           @id @default(uuid())
+  name        String
+  code        String           @unique // e.g. TM-10492
+  logo        String?
+  maxSize     Int              @default(4)
+  captainId   String
+  captain     User             @relation("TeamCaptain", fields: [captainId], references: [id])
+  createdById String
+  createdBy   User             @relation("TeamCreator", fields: [createdById], references: [id])
+  status      String           @default("ACTIVE") // ACTIVE, ARCHIVED, DEACTIVATED
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  members     TeamMember[]
+  invitations TeamInvitation[]
+  submissions Submission[]
+  classroomParticipations ClassroomTeamParticipation[]
+
+  @@index([code])
+  @@index([captainId])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("MEMBER") // CAPTAIN, MEMBER
+  joinedAt  DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@index([teamId])
+}
+
+model TeamInvitation {
+  id          String    @id @default(uuid())
+  teamId      String
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String    @default("Pending") // Pending, Accepted, Rejected
+  invitedAt   DateTime  @default(now())
+  respondedAt DateTime?
+
+  @@index([teamId])
+  @@index([userId])
+}
+
+model ClassroomTeamParticipation {
+  id           String    @id @default(uuid())
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  teamId       String
+  team         Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  status       String    @default("Incomplete Team") // Incomplete Team, Ready for Approval, Approved, Rejected, Withdrawn
+  requestedAt  DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedById String?
+
+  @@unique([classroomId, teamId])
+  @@index([classroomId])
+  @@index([teamId])
+}
+
+model Classroom {
+  id                 String                @id @default(uuid())
+  name               String
+  description        String?
+  code               String                @unique // e.g. CLS-82910
+  logo               String?
+  ownerId            String
+  owner              User                  @relation("ClassroomOwner", fields: [ownerId], references: [id])
+  startDate          DateTime
+  deadline           DateTime
+  submissionMode     String                @default("Individual") // Individual, Team
+  minTeamSize        Int?                  @default(2)
+  maxTeamSize        Int?                  @default(4)
+  resourcesConfig    String?               // JSON array string of required resources
+  status             String                @default("Active") // Active, Archived, Completed
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  members            ClassroomMember[]
+  invitations        ClassroomInvitation[]
+  evaluators         ClassroomEvaluator[]
+  submissions        Submission[]
+  teamParticipations ClassroomTeamParticipation[]
+
+  @@index([code])
+  @@index([ownerId])
+}
+
+model ClassroomMember {
+  id          String    @id @default(uuid())
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("MEMBER") // OWNER, EVALUATOR, MEMBER
+  status      String    @default("Approved") // Pending Approval, Approved, Rejected
+  joinedAt    DateTime  @default(now())
+
+  @@unique([classroomId, userId])
+  @@index([classroomId])
+  @@index([userId])
+}
+
+model ClassroomInvitation {
+  id          String    @id @default(uuid())
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  email       String
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  status      String    @default("Pending") // Pending, Accepted, Rejected
+  invitedAt   DateTime  @default(now())
+
+  @@index([classroomId])
+}
+
+model ClassroomEvaluator {
+  id           String    @id @default(uuid())
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  evaluatorId  String
+  evaluator    User      @relation("EvaluatorUser", fields: [evaluatorId], references: [id])
+  submissionId String?
+  assignedAt   DateTime  @default(now())
+
+  @@index([classroomId])
+  @@index([evaluatorId])
+}
+
+model Submission {
+  id                  String                 @id @default(uuid())
+  classroomId         String
+  classroom           Classroom              @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  submitterId         String
+  submitter           User                   @relation("UserSubmissions", fields: [submitterId], references: [id])
+  teamId              String?
+  team                Team?                  @relation(fields: [teamId], references: [id])
+  
+  // Project details
+  title               String
+  category            String?
+  description         String?
+  problemStatement    String?
+  proposedSolution    String?
+  objectives          String?
+  innovation          String?
+  features            String?
+  targetUsers         String?
+  technologies        String?                // JSON array string
+  programmingLanguages String?               // JSON array string
+  testingApproach     String?
+  limitations         String?
+  futureEnhancements  String?
+  githubUrl           String?
+  liveDemoUrl         String?
+  
+  assignedEvaluatorId String?
+  assignedEvaluator   User?                  @relation("EvaluatorSubmissions", fields: [assignedEvaluatorId], references: [id])
+  
+  status              String                 @default("Submitted") // Submitted, AI_Evaluated, Faculty_Evaluated, Verified, Returned
+  finalTotalScore     Float?                 // Authoritative Backend calculated: AI /50 + PPT/Demo /25 + Viva /25 = 100
+  submittedAt         DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  resources           SubmissionResource[]
+  aiEvaluation        ClassroomAIEvaluation?
+  facultyEvaluation   FacultyEvaluation?
+  verification        Verification?
+  vivaQuestions       VivaQuestion[]
+
+  @@index([classroomId])
+  @@index([submitterId])
+  @@index([teamId])
+  @@index([status])
+}
+
+model SubmissionResource {
+  id           String     @id @default(uuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  type         String     // sourceCode, projectReport, ppt, github, demoVideo, screenshots, dataset, other
+  name         String
+  url          String?
+  path         String?
+  size         String?
+  status       String     @default("uploaded")
+  uploadedAt   DateTime   @default(now())
+
+  @@index([submissionId])
+}
+
+model ClassroomAIEvaluation {
+  id                 String     @id @default(uuid())
+  submissionId       String     @unique
+  submission         Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  rawScore           Float      // /50
+  codeSimilarity     Float      @default(0)
+  reportSimilarity   Float      @default(0)
+  overallSimilarity  Float      @default(0)
+  deduction          Float      @default(0)
+  finalScore         Float      // /50 (rawScore - deduction)
+  plagiarismStatus   String     @default("Low") // Low, Moderate, High
+  plagiarismReason   String?
+  matchedSources     String?    // JSON array string
+  feedback           String
+  improvementPlan    String?    // JSON array string
+  isDemoData         Boolean    @default(false)
+  evaluatedAt        DateTime   @default(now())
+
+  @@index([submissionId])
+}
+
+model FacultyEvaluation {
+  id                String                 @id @default(uuid())
+  submissionId      String                 @unique
+  submission        Submission             @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  evaluatorId       String
+  evaluator         User                   @relation("FacultyEvaluator", fields: [evaluatorId], references: [id])
+  pptDemoScore      Float                  // max 25
+  vivaTotalScore    Float                  // max 25 (sum of 5 questions)
+  totalFacultyScore Float                  // max 50 (pptDemoScore + vivaTotalScore)
+  status            String                 @default("Completed") // Completed, Incomplete, Absent
+  reason            String?                // Mandatory if Incomplete or Absent
+  feedback          String                 // Mandatory
+  evaluatedAt       DateTime               @default(now())
+
+  vivaResponses     VivaQuestionResponse[]
+
+  @@index([submissionId])
+  @@index([evaluatorId])
+}
+
+model VivaQuestionResponse {
+  id                  String            @id @default(uuid())
+  facultyEvaluationId String
+  facultyEvaluation   FacultyEvaluation @relation(fields: [facultyEvaluationId], references: [id], onDelete: Cascade)
+  questionNumber      Int               // 1 to 5
+  questionText        String
+  category            String?
+  maxScore            Float             @default(5.0)
+  score               Float             // 0 to 5
+  feedback            String?
+
+  @@index([facultyEvaluationId])
+}
+
+model Verification {
+  id           String     @id @default(uuid())
+  submissionId String     @unique
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  verifiedById String
+  verifiedBy   User       @relation("VerifiedByUser", fields: [verifiedById], references: [id])
+  status       String     @default("Pending") // Pending, Approved, Returned
+  returnReason String?    // Mandatory if Returned
+  feedback     String?
+  verifiedAt   DateTime   @default(now())
+
+  @@index([submissionId])
+}
+
+model ProjectCheckerProject {
+  id                   String                     @id @default(uuid())
+  userId               String
+  user                 User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                String
+  category             String?
+  description          String?
+  problemStatement     String?
+  proposedSolution     String?
+  objectives           String?
+  innovation           String?
+  features             String?
+  targetUsers          String?
+  technologies         String?                    // JSON array string
+  programmingLanguages String?                    // JSON array string
+  testingApproach      String?
+  limitations          String?
+  futureEnhancements   String?
+  githubUrl            String?
+  liveDemoUrl          String?
+  externalLinks        String?                    // JSON array string
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  resources            ProjectCheckerResource[]
+  aiEvaluation         ProjectCheckerAIEvaluation?
+  plagiarism           ProjectCheckerPlagiarism?
+
+  @@index([userId])
+}
+
+model ProjectCheckerResource {
+  id         String                @id @default(uuid())
+  projectId  String
+  project    ProjectCheckerProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type       String                // sourceCode, projectReport, ppt, github, demoVideo, screenshots, dataset, other
+  name       String
+  url        String?
+  path       String?
+  size       String?
+  status     String                @default("uploaded")
+  uploadedAt DateTime              @default(now())
+
+  @@index([projectId])
+}
+
+model ProjectCheckerAIEvaluation {
+  id                             String                @id @default(uuid())
+  projectId                      String                @unique
+  project                        ProjectCheckerProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  // Criteria Breakdown (Total: 100)
+  problemDefinitionScore         Float                 // max 15
+  problemDefinitionFeedback     String?
+  innovationNoveltyScore         Float                 // max 20
+  innovationNoveltyFeedback     String?
+  technicalImplementationScore   Float                 // max 20
+  technicalImplementationFeedback String?
+  functionalityScore             Float                 // max 15
+  functionalityFeedback         String?
+  codeQualityScore               Float                 // max 10
+  codeQualityFeedback           String?
+  documentationScore             Float                 // max 10
+  documentationFeedback         String?
+  overallQualityScore            Float                 // max 10
+  overallQualityFeedback        String?
+  
+  totalScore                     Float                 // /100
+  strengths                      String                // JSON array string
+  weaknesses                     String                // JSON array string
+  technicalAnalysis              String
+  codeAnalysis                   String
+  documentationAnalysis          String
+  actionableSuggestions          String?               // JSON array string
+  improvementPlan                String                // JSON array string of items
+  summary                        String?
+  aiModel                        String                @default("Provalix-AI-Evaluator-v1")
+  isDemoData                     Boolean               @default(false)
+  evaluatedAt                    DateTime              @default(now())
+
+  @@index([projectId])
+}
+
+model ProjectCheckerPlagiarism {
+  id                String                @id @default(uuid())
+  projectId         String                @unique
+  project           ProjectCheckerProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  codeSimilarity    Float
+  reportSimilarity  Float
+  overallSimilarity Float
+  status            String                // Low, Moderate, High
+  matchedSources    String?               // JSON array string
+  deduction         Float                 @default(0)
+  reason            String?
+  feedback          String?
+  isDemoData        Boolean               @default(false)
+  checkedAt         DateTime              @default(now())
+
+  @@index([projectId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // team_invitation, classroom_invitation, submission_success, ai_evaluated, etc.
+  title     String
+  message   String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  entityType    String
+  entityId      String
+  action        String
+  performedById String?
+  metadata      String?  // JSON string
+  createdAt     DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+model ChatConversation {
+  id           String        @id @default(uuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  projectId    String?
+  submissionId String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  messages     ChatMessage[]
+
+  @@index([userId])
+}
+
+model ChatMessage {
+  id             String           @id @default(uuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String           // user, assistant, system
+  message        String
+  sources        String?          // JSON array string: [{ title, category, id }]
+  createdAt      DateTime         @default(now())
+
+  @@index([conversationId])
+}
+
+model KnowledgeDocument {
+  id        String           @id @default(uuid())
+  title     String
+  category  String           // Project Evaluation Criteria, Plagiarism Guidelines, Viva Guidelines, etc.
+  content   String
+  source    String?
+  version   String           @default("1.0")
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  chunks    KnowledgeChunk[]
+
+  @@index([category])
+  @@index([title])
+}
+
+model KnowledgeChunk {
+  id         String            @id @default(uuid())
+  documentId String
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  content    String
+  embedding  String?           // JSON string representation of embedding vector
+
+  @@index([documentId])
+}
+
+model Dataset {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  fileType    String          // JSON, JSONL, CSV, TXT, PDF
+  recordCount Int             @default(0)
+  version     String          @default("1.0")
+  createdAt   DateTime        @default(now())
+
+  records     DatasetRecord[]
+}
+
+model DatasetRecord {
+  id        String   @id @default(uuid())
+  datasetId String
+  dataset   Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  category  String
+  metadata  String?  // JSON string
+  status    String   @default("Valid") // Valid, Invalid
+  createdAt DateTime @default(now())
+
+  @@index([datasetId])
+  @@index([category])
+}
+
+model AIEvaluationCriterion {
+  id             String   @id @default(uuid())
+  evaluationId   String?
+  criterionName  String   // problemDefinition, innovation, etc.
+  maxScore       Float
+  obtainedScore  Float
+  feedback       String?
+  createdAt      DateTime @default(now())
+
+  @@index([evaluationId])
+}
+
+model PlagiarismResult {
+  id                String   @id @default(uuid())
+  submissionId      String?
+  projectId         String?
+  codeSimilarity    Float
+  reportSimilarity  Float
+  overallSimilarity Float
+  status            String   // Low, Moderate, High
+  deduction         Float    @default(0)
+  reason            String?
+  feedback          String?
+  checkedAt         DateTime @default(now())
+
+  @@index([submissionId])
+  @@index([projectId])
+}
+
+model VivaQuestion {
+  id             String      @id @default(uuid())
+  submissionId   String?
+  submission     Submission? @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  questionNumber Int         // 1 to 5
+  questionText   String
+  maxScore       Float       @default(5.0)
+  category       String      // Problem Understanding, Technical Implementation, Technology / Algorithm Choice, Feature / Internal Working, Scenario / Challenge / Failure Handling
+  createdAt      DateTime    @default(now())
+
+  @@index([submissionId])
+}
+
+model VivaResponse {
+  id             String   @id @default(uuid())
+  evaluationId   String
+  questionNumber Int
+  questionText   String
+  maxScore       Float    @default(5.0)
+  score          Float
+  feedback       String?
+  createdAt      DateTime @default(now())
+
+  @@index([evaluationId])
+}
+
+model ImprovementPlan {
+  id           String   @id @default(uuid())
+  submissionId String?
+  projectId    String?
+  area         String
+  suggestion   String
+  priority     String   // High, Medium, Low
+  createdAt    DateTime @default(now())
+
+  @@index([submissionId])
+  @@index([projectId])
+}
+

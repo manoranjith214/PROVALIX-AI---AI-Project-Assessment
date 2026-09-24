@@ -1,0 +1,237 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@theme {
+  --color-primary: #7C3AED;
+  --color-primary-dark: #6D28D9;
+  --color-primary-light: #A78BFA;
+  --color-primary-hover: #6D28D9;
+
+  --color-brand-bg: #0B1120;
+  --color-brand-surface: #111827;
+  --color-brand-card: #111827;
+  --color-brand-card-hover: #172033;
+  --color-brand-border: #243047;
+  --color-brand-border-subtle: #1E293B;
+  --color-brand-dark: #F8FAFC;
+  --color-brand-slate: #CBD5E1;
+  --color-brand-muted: #94A3B8;
+
+  --color-amber: #F59E0B;
+  --color-amber-light: rgba(245, 158, 11, 0.15);
+
+  --color-ai-purple: #7C3AED;
+  --color-ai-light: #A78BFA;
+  --color-ai-dark: #5B21B6;
+
+  --color-success: #22C55E;
+  --color-success-light: rgba(34, 197, 94, 0.15);
+
+  --color-error: #EF4444;
+  --color-error-light: rgba(239, 68, 68, 0.15);
+
+  --color-info: #38BDF8;
+  --color-info-light: rgba(56, 189, 248, 0.15);
+
+  /* Premium Dark SaaS System Colors */
+  --color-auth-bg: #0B1120;
+  --color-auth-surface: #0F172A;
+  --color-auth-card: #111827;
+  --color-auth-card-hover: #172033;
+  --color-auth-border: #243047;
+  --color-auth-text: #F8FAFC;
+  --color-auth-text-secondary: #CBD5E1;
+  --color-auth-text-muted: #94A3B8;
+  --color-auth-purple: #7C3AED;
+  --color-auth-purple-hover: #6D28D9;
+  --color-auth-purple-active: #5B21B6;
+  --color-auth-secondary-border: #334155;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color-scheme: dark;
+  }
+  
+  body {
+    background-color: #0B1120;
+    color: #F8FAFC;
+    min-height: 100vh;
+  }
+}
+
+/* Custom dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0F172A;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #243047;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Subtle print styles for Project Reports */
+@media print {
+  aside, nav, header, .no-print, button:not(.print-include) {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+  }
+  .print-full-width {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* ========================================================
+   LIGHT THEME DESIGN SYSTEM (Provalix Clean SaaS)
+   ======================================================== */
+html.light {
+  color-scheme: light;
+}
+
+html.light body {
+  background-color: #F8FAFC !important;
+  color: #0F172A !important;
+}
+
+/* Background Color Overrides */
+html.light .bg-brand-bg,
+html.light .bg-\[\#0B1120\],
+html.light [class*="bg-[#0B1120]"] {
+  background-color: #F8FAFC !important;
+}
+
+html.light .bg-\[\#0B1120\]\/90,
+html.light .bg-\[\#0B1120\]\/95,
+html.light .bg-\[\#0B1120\]\/40 {
+  background-color: rgba(248, 250, 252, 0.95) !important;
+}
+
+html.light .bg-brand-surface,
+html.light .bg-brand-card,
+html.light .bg-\[\#111827\],
+html.light [class*="bg-[#111827]"] {
+  background-color: #FFFFFF !important;
+}
+
+html.light .bg-\[\#0F172A\],
+html.light [class*="bg-[#0F172A]"] {
+  background-color: #F1F5F9 !important;
+}
+
+html.light .bg-\[\#0F172A\]\/70,
+html.light .bg-\[\#0F172A\]\/60 {
+  background-color: rgba(241, 245, 249, 0.92) !important;
+}
+
+html.light .bg-\[\#172033\],
+html.light [class*="bg-[#172033]"],
+html.light .bg-\[\#1E293B\],
+html.light [class*="bg-[#1E293B]"] {
+  background-color: #E2E8F0 !important;
+}
+
+html.light .hover\:bg-\[\#172033\]:hover,
+html.light .hover\:bg-\[\#1E293B\]:hover {
+  background-color: #F1F5F9 !important;
+}
+
+/* Border Color Overrides */
+html.light .border-brand-border,
+html.light .border-\[\#243047\],
+html.light [class*="border-[#243047]"] {
+  border-color: #E2E8F0 !important;
+}
+
+html.light .border-brand-border-subtle,
+html.light .border-\[\#1E293B\],
+html.light [class*="border-[#1E293B]"] {
+  border-color: #E2E8F0 !important;
+}
+
+html.light .border-\[\#334155\],
+html.light [class*="border-[#334155]"] {
+  border-color: #CBD5E1 !important;
+}
+
+/* Text Color Overrides */
+html.light .text-brand-dark,
+html.light .text-\[\#F8FAFC\],
+html.light .text-slate-100 {
+  color: #0F172A !important;
+}
+
+html.light .text-brand-slate,
+html.light .text-\[\#CBD5E1\],
+html.light .text-slate-200,
+html.light .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light .text-brand-muted,
+html.light .text-\[\#94A3B8\],
+html.light .text-slate-400 {
+  color: #64748B !important;
+}
+
+html.light .text-slate-500 {
+  color: #64748B !important;
+}
+
+/* Form Controls in Light Mode */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light textarea,
+html.light select {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+  border-color: #CBD5E1 !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94A3B8 !important;
+}
+
+html.light input:focus,
+html.light textarea:focus,
+html.light select:focus {
+  border-color: #7C3AED !important;
+  outline-color: #7C3AED !important;
+}
+
+/* Scrollbars in Light Mode */
+html.light ::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Cards & Elevated Shadows in Light Mode */
+html.light .shadow-subtle,
+html.light .shadow-card,
+html.light .shadow-xl,
+html.light .shadow-2xl {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
