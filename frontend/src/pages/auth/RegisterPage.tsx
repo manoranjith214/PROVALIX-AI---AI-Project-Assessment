@@ -72,6 +72,112 @@ export const RegisterPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  /**
+   * Safely extracts human-readable error messages from Supabase Auth and PostgREST errors.
+   * Guarantees that empty stringified objects ("{}") are never returned to the UI.
+   */
+  const getErrorMessage = (error: any): string => {
+    if (!error) return 'Unknown error';
+
+    if (typeof error === 'string') {
+      const trimmed = error.trim();
+      if (trimmed === '{}' || trimmed === '"{}"' || trimmed === '[object Object]') {
+        return 'Unknown error occurred during registration. Please try again.';
+      }
+      return trimmed;
+    }
+
+    let message: string | undefined = undefined;
+
+    if (
+      error.message &&
+      typeof error.message === 'string' &&
+      error.message.trim() !== '{}' &&
+      error.message.trim() !== '"{}"' &&
+      error.message.trim() !== '[object Object]'
+    ) {
+      message = error.message.trim();
+    } else if (
+      error.error?.message &&
+      typeof error.error.message === 'string' &&
+      error.error.message.trim() !== '{}' &&
+      error.error.message.trim() !== '"{}"'
+    ) {
+      message = error.error.message.trim();
+    } else if (
+      error.error_description &&
+      typeof error.error_description === 'string' &&
+      error.error_description.trim() !== '{}'
+    ) {
+      message = error.error_description.trim();
+    } else if (
+      error.details &&
+      typeof error.details === 'string' &&
+      error.details.trim() !== '{}'
+    ) {
+      message = error.details.trim();
+    } else if (
+      error.hint &&
+      typeof error.hint === 'string' &&
+      error.hint.trim() !== '{}'
+    ) {
+      message = error.hint.trim();
+    } else if (
+      error.msg &&
+      typeof error.msg === 'string' &&
+      error.msg.trim() !== '{}'
+    ) {
+      message = error.msg.trim();
+    }
+
+    const code = error.code || error.error_code;
+    const status = error.status || error.statusCode;
+
+    const parts: string[] = [];
+
+    if (message) {
+      parts.push(message);
+    } else if (error.name === 'AuthRetryableFetchError' || status === 500) {
+      parts.push('Supabase Auth server error (HTTP 500)');
+    } else if (error.name && error.name !== 'Error') {
+      parts.push(error.name);
+    }
+
+    if (error.details && typeof error.details === 'string' && error.details !== message && error.details !== '{}') {
+      parts.push(`Details: ${error.details}`);
+    }
+    if (error.hint && typeof error.hint === 'string' && error.hint !== message) {
+      parts.push(`Hint: ${error.hint}`);
+    }
+    if (code !== undefined && code !== null && String(code) !== '' && String(code) !== 'undefined') {
+      parts.push(`Code: ${code}`);
+    }
+    if (status !== undefined && status !== null && String(status) !== '' && String(status) !== 'undefined') {
+      parts.push(`Status: ${status}`);
+    }
+
+    if (parts.length > 0) {
+      return parts.join(' | ');
+    }
+
+    try {
+      const stringified = JSON.stringify(error, Object.getOwnPropertyNames(error));
+      if (
+        stringified &&
+        stringified !== '{}' &&
+        stringified !== '"{}"' &&
+        stringified !== '[]' &&
+        stringified !== '"[object Object]"'
+      ) {
+        return stringified;
+      }
+    } catch {
+      // ignore
+    }
+
+    return 'Unknown error occurred during registration. Please try again.';
+  };
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -90,13 +196,10 @@ export const RegisterPage: React.FC = () => {
 
       success('Account created successfully. Welcome to Provalix AI!');
       navigate('/dashboard', { replace: true });
-    } catch (err: any) {
-      const msg =
-        err?.message?.includes('already exists') ||
-        err?.message?.includes('already registered')
-          ? 'An account with this email already exists. Please sign in.'
-          : err?.message || 'Unable to complete registration. Please try again.';
-      setFormError(msg);
+    } catch (error: any) {
+      console.error('SIGNUP ERROR:', error);
+      const message = getErrorMessage(error);
+      setFormError(message);
     } finally {
       setIsLoading(false);
     }

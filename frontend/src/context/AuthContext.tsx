@@ -73,15 +73,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (session?.user) {
           let profile = await supabaseDataService.fetchUserProfile(session.user.id);
           if (!profile) {
-            profile = await supabaseDataService.syncUserProfile(session.user);
+            try {
+              profile = await supabaseDataService.syncUserProfile(session.user);
+            } catch (syncErr) {
+              console.warn('[AuthContext] syncUserProfile notice:', syncErr);
+            }
           }
-          tokenStorage.setTokens(session.access_token, session.refresh_token);
-          tokenStorage.setCachedUser(profile);
-          Storage.setCurrentUser(profile);
-          setUser(profile);
-          setIsAuthenticated(true);
-          setIsLoading(false);
-          return;
+          if (profile) {
+            tokenStorage.setTokens(session.access_token, session.refresh_token);
+            tokenStorage.setCachedUser(profile);
+            Storage.setCurrentUser(profile);
+            setUser(profile);
+            setIsAuthenticated(true);
+            setIsLoading(false);
+            return;
+          }
         }
 
         // Secondary check: Provalix backend fallback
@@ -116,13 +122,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
         let profile = await supabaseDataService.fetchUserProfile(session.user.id);
         if (!profile) {
-          profile = await supabaseDataService.syncUserProfile(session.user);
+          try {
+            profile = await supabaseDataService.syncUserProfile(session.user);
+          } catch (syncErr) {
+            console.warn('[AuthContext] syncUserProfile notice:', syncErr);
+          }
         }
-        tokenStorage.setTokens(session.access_token, session.refresh_token);
-        tokenStorage.setCachedUser(profile);
-        Storage.setCurrentUser(profile);
-        setUser(profile);
-        setIsAuthenticated(true);
+        if (profile) {
+          tokenStorage.setTokens(session.access_token, session.refresh_token);
+          tokenStorage.setCachedUser(profile);
+          Storage.setCurrentUser(profile);
+          setUser(profile);
+          setIsAuthenticated(true);
+        }
       } else if (event === 'SIGNED_OUT') {
         Storage.clearAllUserData();
         tokenStorage.clearTokens();
@@ -238,6 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (error) {
+      console.error('SIGNUP ERROR (supabase.auth.signUp):', error);
       const msg = error.message?.toLowerCase() || '';
       if (
         msg.includes('already registered') ||
@@ -245,9 +258,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         msg.includes('unique constraint') ||
         error.status === 422
       ) {
-        throw new Error('An account with this email already exists. Please sign in.');
+        const dupError: any = new Error('An account with this email already exists. Please sign in.');
+        dupError.code = error.code || 'USER_ALREADY_EXISTS';
+        dupError.status = error.status || 422;
+        throw dupError;
       }
-      throw new Error(error.message || 'Registration failed. Please check your details and try again.');
+
+      // Safeguard against Supabase Auth returning "{}" as error.message (e.g. on AuthRetryableFetchError 500)
+      const rawMsg =
+        error.message && typeof error.message === 'string' && error.message.trim() !== '{}' && error.message.trim() !== '[object Object]'
+          ? error.message.trim()
+          : (error as any).error_description || (error as any).msg || '';
+
+      const fallbackMsg = rawMsg || (error.status ? `Supabase Auth error (Status ${error.status})` : 'Registration failed');
+      const authErr: any = new Error(fallbackMsg);
+      authErr.code = error.code || (error as any).error_code;
+      authErr.status = error.status || (error as any).statusCode;
+      authErr.name = error.name;
+      authErr.details = (error as any).details;
+      authErr.hint = (error as any).hint;
+      throw authErr;
     }
 
     let activeSession = data.session;
@@ -268,18 +298,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 4. Create/sync user profile in public.profiles table
     let profile: User;
     if (authUser) {
-      profile = await supabaseDataService.syncUserProfile({
-        ...authUser,
-        user_metadata: {
-          full_name: name.trim(),
-          department: extra?.department || 'Computer Science & Engineering',
-          year: extra?.year || '1st Year',
-          college: extra?.college || 'Apex Institute of Technology & Research',
-          permanent_id: permanentId,
-          permanent_user_id: permanentId,
-          avatar_url: profileImg,
-        },
-      });
+      try {
+        profile = await supabaseDataService.syncUserProfile({
+          ...authUser,
+          user_metadata: {
+            full_name: name.trim(),
+            department: extra?.department || 'Computer Science & Engineering',
+            year: extra?.year || '1st Year',
+            college: extra?.college || 'Apex Institute of Technology & Research',
+            permanent_id: permanentId,
+            permanent_user_id: permanentId,
+            avatar_url: profileImg,
+          },
+        });
+      } catch (dbErr: any) {
+        console.error('SIGNUP ERROR (profile sync):', dbErr);
+        const profileErr: any = new Error(
+          `Account created, but database profile insert failed: ${dbErr.message || 'Database error'}`
+        );
+        profileErr.code = dbErr.code;
+        profileErr.status = dbErr.status || 400;
+        profileErr.details = dbErr.details;
+        profileErr.hint = dbErr.hint;
+        throw profileErr;
+      }
     } else {
       profile = {
         id: '',

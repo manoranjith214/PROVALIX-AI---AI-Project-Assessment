@@ -141,8 +141,13 @@ export const supabaseDataService = {
       .single();
 
     if (error) {
-      console.warn('[supabaseDataService] syncUserProfile notice:', error.message);
-      return mapSupabaseProfile(payload);
+      console.error('[supabaseDataService] syncUserProfile database error:', error);
+      const postgrestErr: any = new Error(error.message || 'Database error saving user profile');
+      postgrestErr.code = error.code;
+      postgrestErr.details = error.details;
+      postgrestErr.hint = error.hint;
+      postgrestErr.status = 400;
+      throw postgrestErr;
     }
 
     return mapSupabaseProfile(data);
