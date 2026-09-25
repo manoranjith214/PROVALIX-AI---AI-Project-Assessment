@@ -12,70 +12,131 @@ export const AuthCallbackPage: React.FC = () => {
   const { handleOAuthCallback } = useAuth();
   const { success, error: toastError } = useToast();
 
-  const oauthError = searchParams.get('error_description') || searchParams.get('error');
-  const [status, setStatus] = useState<'loading' | 'error' | 'success'>(() => oauthError ? 'error' : 'loading');
-  const [errorMessage, setErrorMessage] = useState<string>(() => oauthError || '');
-  const processedRef = useRef(Boolean(oauthError));
+  // Extract potential errors from both query string and hash fragment
+  const parseErrors = () => {
+    const queryErr = searchParams.get('error_description') || searchParams.get('error');
+    if (queryErr) return queryErr;
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const hashErr = hashParams.get('error_description') || hashParams.get('error');
+      if (hashErr) return hashErr;
+    }
+    return '';
+  };
+
+  const initialError = parseErrors();
+  const [status, setStatus] = useState<'loading' | 'error' | 'success'>(() => initialError ? 'error' : 'loading');
+  const [errorMessage, setErrorMessage] = useState<string>(() => initialError);
+  const processedRef = useRef(Boolean(initialError));
 
   useEffect(() => {
-    if (oauthError) {
-      toastError(oauthError);
+    if (initialError) {
+      toastError(initialError);
       return;
     }
 
     let isCancelled = false;
     let authSubscription: { unsubscribe: () => void } | null = null;
 
-    const processSession = async () => {
+    const processAuth = async () => {
       if (processedRef.current || isCancelled) return;
 
       try {
-        // 1. Try to get active session from Supabase client
-        const { data, error } = await supabase.auth.getSession();
-
-        if (error) {
-          throw error;
-        }
-
-        let accessToken = data.session?.access_token;
-
-        // 2. Fallback check URL hash if session is still resolving from implicit redirect
-        if (!accessToken && window.location.hash) {
-          const hashParams = new URLSearchParams(window.location.hash.substring(1));
-          accessToken = hashParams.get('access_token') || undefined;
-          const hashError = hashParams.get('error_description') || hashParams.get('error');
-          if (hashError) {
-            throw new Error(hashError);
+        // 1. If PKCE ?code= parameter is present, exchange it for session
+        const code = searchParams.get('code');
+        if (code) {
+          try {
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+            if (exchangeError) {
+              console.warn('[OAuth] exchangeCodeForSession notice:', exchangeError.message);
+            }
+          } catch (exchangeErr: any) {
+            console.warn('[OAuth] exchangeCodeForSession threw:', exchangeErr?.message || exchangeErr);
           }
         }
 
+        // 2. If implicit #access_token is present in hash fragment, set session
+        let hashAccessToken: string | null = null;
+        let hashRefreshToken: string | null = null;
+        if (typeof window !== 'undefined' && window.location.hash) {
+          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+          hashAccessToken = hashParams.get('access_token');
+          hashRefreshToken = hashParams.get('refresh_token');
+
+          if (hashAccessToken) {
+            try {
+              const { error: setSessionErr } = await supabase.auth.setSession({
+                access_token: hashAccessToken,
+                refresh_token: hashRefreshToken || '',
+              });
+              if (setSessionErr) {
+                console.warn('[OAuth] setSession with hash token notice:', setSessionErr.message);
+              }
+            } catch (setErr: any) {
+              console.warn('[OAuth] setSession threw:', setErr?.message || setErr);
+            }
+          }
+        }
+
+        // 3. After authentication exchange/set, retrieve the session with supabase.auth.getSession()
+        let session = null;
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.warn('[OAuth] getSession error:', sessionError.message);
+        } else {
+          session = sessionData?.session;
+        }
+
+        // If session is still resolving, retry briefly
+        if (!session && !hashAccessToken) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise((r) => setTimeout(r, 400));
+            if (isCancelled || processedRef.current) return;
+            const { data: retryData } = await supabase.auth.getSession();
+            if (retryData?.session) {
+              session = retryData.session;
+              break;
+            }
+          }
+        }
+
+        const accessToken = session?.access_token || hashAccessToken;
+
         if (accessToken) {
-          if (processedRef.current) return;
+          if (processedRef.current || isCancelled) return;
           processedRef.current = true;
 
-          // Send verified token to Provalix backend
-          const user = await handleOAuthCallback(accessToken);
+          // Obtain user info from session or query Supabase user
+          let sbUser: any = session?.user;
+          if (!sbUser) {
+            const { data: userData } = await supabase.auth.getUser(accessToken).catch(() => ({ data: { user: null } }));
+            sbUser = userData?.user ?? undefined;
+          }
+
+          // 4. Sync the Supabase user/profile into the existing application AuthContext/storage
+          const user = await handleOAuthCallback(accessToken, sbUser);
           if (isCancelled) return;
 
+          // 5. Navigate to /dashboard after successful authentication
           setStatus('success');
-          success(`Welcome to Provalix AI, ${user.name}!`);
+          success(`Welcome to Provalix AI, ${user.name || 'User'}!`);
           navigate('/dashboard', { replace: true });
           return;
         }
 
-        // 3. Fallback: Listen to auth state change if Supabase client is exchanging code/token
+        // 6. Fallback: Listen to auth state change if Supabase client is exchanging asynchronously
         const { data: listenerData } = supabase.auth.onAuthStateChange(
-          async (event, session) => {
+          async (event, currentSession) => {
             if (processedRef.current || isCancelled) return;
 
-            if (event === 'SIGNED_IN' && session?.access_token) {
+            if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && currentSession?.access_token) {
               processedRef.current = true;
               try {
-                const user = await handleOAuthCallback(session.access_token);
+                const user = await handleOAuthCallback(currentSession.access_token, currentSession.user);
                 if (isCancelled) return;
 
                 setStatus('success');
-                success(`Welcome to Provalix AI, ${user.name}!`);
+                success(`Welcome to Provalix AI, ${user.name || 'User'}!`);
                 navigate('/dashboard', { replace: true });
               } catch (err: any) {
                 if (isCancelled) return;
@@ -96,7 +157,7 @@ export const AuthCallbackPage: React.FC = () => {
               authSubscription.unsubscribe();
             }
             setStatus('error');
-            setErrorMessage('Google authentication timed out or could not find an active session. Please try again.');
+            setErrorMessage('Google authentication timed out or could not establish an active session. Please try signing in again.');
           }
         }, 7000);
 
@@ -116,7 +177,7 @@ export const AuthCallbackPage: React.FC = () => {
       }
     };
 
-    processSession();
+    processAuth();
 
     return () => {
       isCancelled = true;
@@ -124,7 +185,7 @@ export const AuthCallbackPage: React.FC = () => {
         authSubscription.unsubscribe();
       }
     };
-  }, [handleOAuthCallback, navigate, oauthError, success, toastError]);
+  }, [handleOAuthCallback, initialError, navigate, searchParams, success, toastError]);
 
   return (
     <div className="min-h-screen bg-[#0B1120] text-[#F8FAFC] flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">

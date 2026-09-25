@@ -17,7 +17,34 @@ export const supabase = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      flowType: 'implicit',
+      flowType: 'pkce',
     },
   }
 );
+
+/**
+ * Resolves the OAuth redirect URL:
+ * - Localhost / local dev: returns current local origin + /auth/callback (e.g. http://localhost:5173/auth/callback)
+ * - Production: returns https://provalix-ai.vercel.app/auth/callback (or VITE_AUTH_REDIRECT_URL if configured)
+ */
+export const getOAuthRedirectUrl = (): string => {
+  if (typeof window === 'undefined') {
+    return 'https://provalix-ai.vercel.app/auth/callback';
+  }
+
+  const hostname = window.location.hostname;
+  const isLocal =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.endsWith('.local') ||
+    hostname === '[::1]';
+
+  if (isLocal) {
+    return `${window.location.origin}/auth/callback`;
+  }
+
+  return (
+    import.meta.env.VITE_AUTH_REDIRECT_URL ||
+    'https://provalix-ai.vercel.app/auth/callback'
+  );
+};
