@@ -43,15 +43,26 @@ export const AuthCallbackPage: React.FC = () => {
 
       try {
         // 1. If PKCE ?code= parameter is present, exchange it for session
-        const code = searchParams.get('code');
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code') || urlParams.get('code');
+        let session = null;
+
         if (code) {
-          try {
-            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-            if (exchangeError) {
-              console.warn('[OAuth] exchangeCodeForSession notice:', exchangeError.message);
+          const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) {
+            console.warn('[OAuth] exchangeCodeForSession warning:', exchangeError.message);
+            // Check if Supabase client detectSessionInUrl already retrieved session
+            const { data: currentData } = await supabase.auth.getSession();
+            if (currentData?.session) {
+              session = currentData.session;
+            } else {
+              throw new Error(
+                exchangeError.message ||
+                'Authentication failed: Unable to exchange Google authorization code. Please try signing in again.'
+              );
             }
-          } catch (exchangeErr: any) {
-            console.warn('[OAuth] exchangeCodeForSession threw:', exchangeErr?.message || exchangeErr);
+          } else if (exchangeData?.session) {
+            session = exchangeData.session;
           }
         }
 
@@ -65,12 +76,14 @@ export const AuthCallbackPage: React.FC = () => {
 
           if (hashAccessToken) {
             try {
-              const { error: setSessionErr } = await supabase.auth.setSession({
+              const { data: setData, error: setSessionErr } = await supabase.auth.setSession({
                 access_token: hashAccessToken,
                 refresh_token: hashRefreshToken || '',
               });
               if (setSessionErr) {
                 console.warn('[OAuth] setSession with hash token notice:', setSessionErr.message);
+              } else if (setData?.session) {
+                session = setData.session;
               }
             } catch (setErr: any) {
               console.warn('[OAuth] setSession threw:', setErr?.message || setErr);
@@ -78,16 +91,17 @@ export const AuthCallbackPage: React.FC = () => {
           }
         }
 
-        // 3. After authentication exchange/set, retrieve the session with supabase.auth.getSession()
-        let session = null;
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) {
-          console.warn('[OAuth] getSession error:', sessionError.message);
-        } else {
-          session = sessionData?.session;
+        // 3. After authentication exchange/set, ensure session is retrieved with supabase.auth.getSession()
+        if (!session) {
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) {
+            console.warn('[OAuth] getSession error:', sessionError.message);
+          } else {
+            session = sessionData?.session;
+          }
         }
 
-        // If session is still resolving, retry briefly
+        // If session is still resolving, retry briefly (detectSessionInUrl may take a tick)
         if (!session && !hashAccessToken) {
           for (let attempt = 0; attempt < 3; attempt++) {
             await new Promise((r) => setTimeout(r, 400));

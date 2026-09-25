@@ -1,11 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabasePublishableKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 if (!supabaseUrl || !supabasePublishableKey) {
   console.warn(
-    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_PUBLISHABLE_KEY are not configured. Google OAuth may fail.'
+    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY) are not configured. Google OAuth may fail.'
   );
 }
 
@@ -25,7 +27,7 @@ export const supabase = createClient(
 /**
  * Resolves the OAuth redirect URL:
  * - Localhost / local dev: returns current local origin + /auth/callback (e.g. http://localhost:5173/auth/callback)
- * - Production: returns https://provalix-ai.vercel.app/auth/callback (or VITE_AUTH_REDIRECT_URL if configured)
+ * - Production: returns https://provalix-ai.vercel.app/auth/callback (or VITE_AUTH_REDIRECT_URL / VITE_SITE_URL if configured)
  */
 export const getOAuthRedirectUrl = (): string => {
   if (typeof window === 'undefined') {
@@ -43,8 +45,12 @@ export const getOAuthRedirectUrl = (): string => {
     return `${window.location.origin}/auth/callback`;
   }
 
+  const siteUrl = import.meta.env.VITE_SITE_URL;
+  const siteCallback = siteUrl ? `${siteUrl.replace(/\/+$/, '')}/auth/callback` : null;
+
   return (
     import.meta.env.VITE_AUTH_REDIRECT_URL ||
+    siteCallback ||
     'https://provalix-ai.vercel.app/auth/callback'
   );
 };
