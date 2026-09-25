@@ -57,7 +57,7 @@ const PageLoadingFallback: React.FC = () => (
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#0B1120] flex items-center justify-center">
@@ -68,7 +68,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
       </div>
     );
   }
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !user?.id) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

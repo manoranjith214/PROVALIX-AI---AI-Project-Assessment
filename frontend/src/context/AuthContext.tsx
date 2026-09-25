@@ -69,6 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const verifySession = async () => {
       try {
+        setIsLoading(true);
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           let profile = await supabaseDataService.fetchUserProfile(session.user.id);
@@ -79,15 +80,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.warn('[AuthContext] syncUserProfile notice:', syncErr);
             }
           }
-          if (profile) {
-            tokenStorage.setTokens(session.access_token, session.refresh_token);
-            tokenStorage.setCachedUser(profile);
-            Storage.setCurrentUser(profile);
-            setUser(profile);
-            setIsAuthenticated(true);
-            setIsLoading(false);
-            return;
-          }
+          const resolvedUser: User = profile || {
+            id: session.user.id,
+            name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+            email: session.user.email || '',
+            permanentId: session.user.user_metadata?.permanent_id || session.user.user_metadata?.permanent_user_id || '',
+            department: session.user.user_metadata?.department || 'Computer Science & Engineering',
+            year: session.user.user_metadata?.year || '1st Year',
+            college: session.user.user_metadata?.college || 'Apex Institute of Technology & Research',
+            role: session.user.user_metadata?.role || 'Student',
+            avatar: session.user.user_metadata?.avatar_url || session.user.user_metadata?.profile_image || undefined,
+            profileImage: session.user.user_metadata?.avatar_url || session.user.user_metadata?.profile_image || undefined,
+          };
+
+          tokenStorage.setTokens(session.access_token, session.refresh_token);
+          tokenStorage.setCachedUser(resolvedUser);
+          Storage.setCurrentUser(resolvedUser);
+          setUser(resolvedUser);
+          setIsAuthenticated(true);
+          return;
         }
 
         // Secondary check: Provalix backend fallback
@@ -97,15 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const profile = await authService.getCurrentUser();
             setUser(profile);
             setIsAuthenticated(true);
-            setIsLoading(false);
             return;
           } catch {
-            tokenStorage.clearTokens();
+            // Do not aggressively clear storage
           }
         }
 
-        Storage.clearAllUserData();
-        tokenStorage.clearTokens();
         setUser(EMPTY_USER);
         setIsAuthenticated(false);
       } catch (err) {
@@ -117,9 +125,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     verifySession();
 
-    // Supabase auth state change listener
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
+    // Supabase auth state change listener with subscription.unsubscribe()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[AuthContext] onAuthStateChange event:', event, 'has session:', Boolean(session));
+      if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION')) {
         let profile = await supabaseDataService.fetchUserProfile(session.user.id);
         if (!profile) {
           try {
@@ -128,32 +137,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.warn('[AuthContext] syncUserProfile notice:', syncErr);
           }
         }
-        if (profile) {
-          tokenStorage.setTokens(session.access_token, session.refresh_token);
-          tokenStorage.setCachedUser(profile);
-          Storage.setCurrentUser(profile);
-          setUser(profile);
-          setIsAuthenticated(true);
-        }
+        const resolvedUser: User = profile || {
+          id: session.user.id,
+          name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+          email: session.user.email || '',
+          permanentId: session.user.user_metadata?.permanent_id || session.user.user_metadata?.permanent_user_id || '',
+          department: session.user.user_metadata?.department || 'Computer Science & Engineering',
+          year: session.user.user_metadata?.year || '1st Year',
+          college: session.user.user_metadata?.college || 'Apex Institute of Technology & Research',
+          role: session.user.user_metadata?.role || 'Student',
+          avatar: session.user.user_metadata?.avatar_url || session.user.user_metadata?.profile_image || undefined,
+          profileImage: session.user.user_metadata?.avatar_url || session.user.user_metadata?.profile_image || undefined,
+        };
+        tokenStorage.setTokens(session.access_token, session.refresh_token);
+        tokenStorage.setCachedUser(resolvedUser);
+        Storage.setCurrentUser(resolvedUser);
+        setUser(resolvedUser);
+        setIsAuthenticated(true);
+        setIsLoading(false);
       } else if (event === 'SIGNED_OUT') {
         Storage.clearAllUserData();
         tokenStorage.clearTokens();
         setUser(EMPTY_USER);
         setIsAuthenticated(false);
+        setIsLoading(false);
       }
     });
 
-    const handleExternalLogout = () => {
-      Storage.clearAllUserData();
-      tokenStorage.clearTokens();
-      setUser(EMPTY_USER);
-      setIsAuthenticated(false);
-    };
-
-    window.addEventListener('provalix:auth:logout', handleExternalLogout);
     return () => {
-      authListener?.subscription?.unsubscribe();
-      window.removeEventListener('provalix:auth:logout', handleExternalLogout);
+      subscription.unsubscribe();
     };
   }, []);
 
@@ -180,6 +192,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       password,
     });
 
+    console.log('LOGIN DATA:', data);
+    console.log('LOGIN ERROR:', error);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    console.log('SESSION AFTER LOGIN:', sessionData?.session);
+
     if (error) {
       const msg = error.message?.toLowerCase() || '';
       if (msg.includes('invalid login credentials') || msg.includes('invalid credentials')) {
@@ -194,15 +212,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     let profile = await supabaseDataService.fetchUserProfile(data.session.user.id);
     if (!profile) {
-      profile = await supabaseDataService.syncUserProfile(data.session.user);
+      try {
+        profile = await supabaseDataService.syncUserProfile(data.session.user);
+      } catch (syncErr) {
+        console.warn('[AuthContext] syncUserProfile notice during login:', syncErr);
+      }
     }
 
+    const resolvedUser: User = profile || {
+      id: data.session.user.id,
+      name: data.session.user.user_metadata?.full_name || data.session.user.user_metadata?.name || data.session.user.email?.split('@')[0] || 'User',
+      email: data.session.user.email || '',
+      permanentId: data.session.user.user_metadata?.permanent_id || data.session.user.user_metadata?.permanent_user_id || '',
+      department: data.session.user.user_metadata?.department || 'Computer Science & Engineering',
+      year: data.session.user.user_metadata?.year || '1st Year',
+      college: data.session.user.user_metadata?.college || 'Apex Institute of Technology & Research',
+      role: data.session.user.user_metadata?.role || 'Student',
+      avatar: data.session.user.user_metadata?.avatar_url || data.session.user.user_metadata?.profile_image || undefined,
+      profileImage: data.session.user.user_metadata?.avatar_url || data.session.user.user_metadata?.profile_image || undefined,
+    };
+
     tokenStorage.setTokens(data.session.access_token, data.session.refresh_token);
-    tokenStorage.setCachedUser(profile);
-    Storage.setCurrentUser(profile);
-    setUser(profile);
+    tokenStorage.setCachedUser(resolvedUser);
+    Storage.setCurrentUser(resolvedUser);
+    setUser(resolvedUser);
     setIsAuthenticated(true);
-    return profile;
+    setIsLoading(false);
+    return resolvedUser;
   };
 
   /**

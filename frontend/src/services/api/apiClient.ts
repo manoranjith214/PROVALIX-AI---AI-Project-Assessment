@@ -84,52 +84,9 @@ export const apiClient = {
       );
     }
 
-    // Handle 401 Unauthorized with automatic refresh token logic
-    if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/refresh')) {
-      const refreshToken = tokenStorage.getRefreshToken();
-
-      if (refreshToken) {
-        if (!isRefreshing) {
-          isRefreshing = true;
-
-          try {
-            const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ refreshToken }),
-            });
-
-            const refreshJson: ApiResponse<{ accessToken: string }> = await refreshRes.json();
-
-            if (refreshRes.ok && refreshJson.data?.accessToken) {
-              const newAccessToken = refreshJson.data.accessToken;
-              tokenStorage.setAccessToken(newAccessToken);
-              processQueue(null, newAccessToken);
-              isRefreshing = false;
-
-              // Retry current failed request
-              return this.request<T>(endpoint, options);
-            } else {
-              throw new Error('Refresh token invalid or expired');
-            }
-          } catch (refreshErr: any) {
-            tokenStorage.clearTokens();
-            processQueue(refreshErr, null);
-            isRefreshing = false;
-            window.dispatchEvent(new Event('provalix:auth:logout'));
-            throw new ApiError('Session expired. Please sign in again.', 401);
-          }
-        } else {
-          // A refresh request is already pending; queue this request
-          return new Promise<T>((resolve, reject) => {
-            failedQueue.push({ resolve, reject, endpoint, options });
-          });
-        }
-      } else {
-        tokenStorage.clearTokens();
-        window.dispatchEvent(new Event('provalix:auth:logout'));
-        throw new ApiError('Authentication required. Please log in.', 401);
-      }
+    // Handle 401 Unauthorized: throw ApiError without clearing Supabase session or forcing global logout
+    if (response.status === 401) {
+      throw new ApiError('Authentication required or endpoint unauthorized.', 401);
     }
 
     // Parse JSON response
