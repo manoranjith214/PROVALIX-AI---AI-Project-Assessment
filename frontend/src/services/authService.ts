@@ -234,6 +234,14 @@ export const authService = {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
+    // Database as source of truth: Sync to Supabase public.profiles
+    if (prev.id) {
+      import('./supabaseDataService').then(({ supabaseDataService }) => {
+        supabaseDataService.updateUserProfile(prev.id, updates).catch(() => {});
+      });
+    }
+
     const updated: User = {
       ...prev,
       ...(rawUser ? normalizeUser(rawUser) : {}),

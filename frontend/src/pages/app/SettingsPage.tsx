@@ -15,6 +15,7 @@ import { tokenStorage } from '../../services/api/tokenStorage';
 import { projectCheckerService } from '../../services/projectCheckerService';
 import { teamService } from '../../services/teamService';
 import { classroomService } from '../../services/classroomService';
+import { supabaseDataService } from '../../services/supabaseDataService';
 import { 
   User as UserIcon, 
   Palette, 
@@ -98,9 +99,34 @@ export const SettingsPage: React.FC = () => {
     };
   });
 
+  // Load persisted settings from Supabase on mount
+  useEffect(() => {
+    if (!user.id) return;
+    supabaseDataService.getUserSettings(user.id).then(settings => {
+      if (!settings) return;
+      if (settings.notification_preferences) {
+        setNotifPreferences(settings.notification_preferences);
+        localStorage.setItem('provalix_notification_preferences', JSON.stringify(settings.notification_preferences));
+      }
+      if (settings.privacy_preferences) {
+        setPrivacyPreferences(settings.privacy_preferences);
+        localStorage.setItem('provalix_privacy_preferences', JSON.stringify(settings.privacy_preferences));
+      }
+      if (settings.evaluation_preferences) {
+        setEvalPreferences(settings.evaluation_preferences);
+        localStorage.setItem('provalix_evaluation_preferences', JSON.stringify(settings.evaluation_preferences));
+      }
+      if (settings.ai_settings) {
+        setAiSettings(settings.ai_settings);
+        localStorage.setItem('provalix_ai_settings', JSON.stringify(settings.ai_settings));
+      }
+    }).catch(() => {});
+  }, [user.id]);
+
   const updateNotifPref = (key: string, val: boolean) => {
     const updated = { ...notifPreferences, [key]: val };
     setNotifPreferences(updated);
+    supabaseDataService.saveUserSettings('notification_preferences', updated).catch(() => {});
     try {
       localStorage.setItem('provalix_notification_preferences', JSON.stringify(updated));
       success('Notification preference saved.');
@@ -128,6 +154,7 @@ export const SettingsPage: React.FC = () => {
   const updatePrivacyPref = (key: string, val: any) => {
     const updated = { ...privacyPreferences, [key]: val };
     setPrivacyPreferences(updated);
+    supabaseDataService.saveUserSettings('privacy_preferences', updated).catch(() => {});
     try {
       localStorage.setItem('provalix_privacy_preferences', JSON.stringify(updated));
       success('Privacy setting saved.');
@@ -156,6 +183,7 @@ export const SettingsPage: React.FC = () => {
   const updateEvalPref = (key: string, val: boolean) => {
     const updated = { ...evalPreferences, [key]: val };
     setEvalPreferences(updated);
+    supabaseDataService.saveUserSettings('evaluation_preferences', updated).catch(() => {});
     try {
       localStorage.setItem('provalix_evaluation_preferences', JSON.stringify(updated));
       success('Evaluation preference saved.');
@@ -184,6 +212,7 @@ export const SettingsPage: React.FC = () => {
   const updateAiSetting = (key: string, val: boolean) => {
     const updated = { ...aiSettings, [key]: val };
     setAiSettings(updated);
+    supabaseDataService.saveUserSettings('ai_settings', updated).catch(() => {});
     try {
       localStorage.setItem('provalix_ai_settings', JSON.stringify(updated));
       if (key === 'enabled') {

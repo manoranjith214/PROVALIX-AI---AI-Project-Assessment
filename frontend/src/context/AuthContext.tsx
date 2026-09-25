@@ -4,6 +4,7 @@ import { authService } from '../services/authService';
 import { tokenStorage } from '../services/api/tokenStorage';
 import { initializeStorage, Storage } from '../services/storage';
 import { supabase, getOAuthRedirectUrl } from '../lib/supabase';
+import { supabaseDataService } from '../services/supabaseDataService';
 
 const EMPTY_USER: User = {
   id: '',
@@ -58,92 +59,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initializeStorage();
 
     const verifySession = async () => {
-      const accessToken = tokenStorage.getAccessToken();
-      const refreshToken = tokenStorage.getRefreshToken();
-      const cached = tokenStorage.getCachedUser();
-
-      if (accessToken) {
-        try {
-          const profile = await authService.getCurrentUser();
+      try {
+        // Step 6: On page refresh, restore Supabase session first
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          // Database is the source of truth: fetch profile from public.profiles
+          let profile = await supabaseDataService.fetchUserProfile(session.user.id);
+          if (!profile) {
+            // First time sync into public.profiles
+            profile = await supabaseDataService.syncUserProfile(session.user);
+          }
+          tokenStorage.setTokens(session.access_token, session.refresh_token);
+          tokenStorage.setCachedUser(profile);
+          Storage.setCurrentUser(profile);
           setUser(profile);
           setIsAuthenticated(true);
-        } catch {
-          // Check if Supabase session is still active
-          try {
-            const { data } = await supabase.auth.getSession();
-            if (data?.session && cached) {
-              setUser(cached);
-              setIsAuthenticated(true);
-              setIsLoading(false);
-              return;
-            }
-          } catch {
-            // ignore
-          }
-
-          // Token might be expired; attempt refresh if refresh token is present
-          if (refreshToken) {
-            try {
-              await authService.refreshToken();
-              const profile = await authService.getCurrentUser();
-              setUser(profile);
-              setIsAuthenticated(true);
-            } catch {
-              Storage.clearAllUserData();
-              tokenStorage.clearTokens();
-              setUser(EMPTY_USER);
-              setIsAuthenticated(false);
-            }
-          } else {
-            Storage.clearAllUserData();
-            tokenStorage.clearTokens();
-            setUser(EMPTY_USER);
-            setIsAuthenticated(false);
-          }
+          setIsLoading(false);
+          return;
         }
-      } else {
-        // Check if Supabase client already has an active persisted session (e.g. PKCE restore)
-        try {
-          const { data } = await supabase.auth.getSession();
-          if (data?.session?.access_token) {
-            const sbUser = data.session.user;
-            const restoredUser: User = cached || {
-              id: sbUser.id,
-              name:
-                (sbUser.user_metadata?.full_name as string) ||
-                (sbUser.user_metadata?.name as string) ||
-                sbUser.email?.split('@')[0] ||
-                'User',
-              email: sbUser.email || '',
-              permanentId: `PRV-${sbUser.id.slice(0, 5)}`,
-              department: 'Computer Science & Engineering',
-              year: '1st Year',
-              college: 'Apex Institute of Technology & Research',
-              avatar:
-                (sbUser.user_metadata?.avatar_url as string) ||
-                (sbUser.user_metadata?.picture as string),
-              profileImage:
-                (sbUser.user_metadata?.avatar_url as string) ||
-                (sbUser.user_metadata?.picture as string),
-              role: 'Student',
-              authProvider: 'google',
-            };
-            tokenStorage.setTokens(data.session.access_token, data.session.refresh_token);
-            tokenStorage.setCachedUser(restoredUser);
-            Storage.setCurrentUser(restoredUser);
-            setUser(restoredUser);
+
+        // Secondary check: Provalix backend JWT if not using Supabase auth directly
+        const accessToken = tokenStorage.getAccessToken();
+        if (accessToken) {
+          try {
+            const profile = await authService.getCurrentUser();
+            setUser(profile);
             setIsAuthenticated(true);
             setIsLoading(false);
             return;
+          } catch {
+            const refreshToken = tokenStorage.getRefreshToken();
+            if (refreshToken) {
+              try {
+                await authService.refreshToken();
+                const profile = await authService.getCurrentUser();
+                setUser(profile);
+                setIsAuthenticated(true);
+                setIsLoading(false);
+                return;
+              } catch {}
+            }
           }
-        } catch {
-          // ignore
         }
 
+        Storage.clearAllUserData();
+        tokenStorage.clearTokens();
         setUser(EMPTY_USER);
         setIsAuthenticated(false);
+      } catch (err) {
+        console.warn('[AuthContext] verifySession notice:', err);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     verifySession();
@@ -182,53 +149,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const googleLogin = signInWithGoogle;
 
   const handleOAuthCallback = async (accessToken: string, supabaseUser?: any): Promise<User> => {
-    let syncedUser: User;
-    try {
-      const res = await authService.supabaseLogin(accessToken);
-      syncedUser = res.user;
-    } catch (err: any) {
-      console.warn(
-        '[AuthContext] Backend /auth/supabase unreachable or failed. Falling back to Supabase session sync:',
-        err?.message || err
-      );
-
-      const email = supabaseUser?.email || '';
-      const name =
-        supabaseUser?.user_metadata?.full_name ||
-        supabaseUser?.user_metadata?.name ||
-        (email ? email.split('@')[0] : 'User');
-      const avatar =
-        supabaseUser?.user_metadata?.avatar_url ||
-        supabaseUser?.user_metadata?.picture ||
-        undefined;
-
-      const cached = tokenStorage.getCachedUser();
-      const fallbackUser: User = {
-        id: supabaseUser?.id || cached?.id || 'usr_oauth',
-        name: name || cached?.name || 'User',
-        email: email || cached?.email || '',
-        permanentId: cached?.permanentId || `PRV-${(supabaseUser?.id || '10000').slice(0, 5)}`,
-        department: cached?.department || 'Computer Science & Engineering',
-        year: cached?.year || '1st Year',
-        college: cached?.college || 'Apex Institute of Technology & Research',
-        avatar: avatar || cached?.avatar,
-        profileImage: avatar || cached?.profileImage,
-        role: cached?.role || 'Student',
-        authProvider: 'google',
-        createdAt: cached?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-
-      tokenStorage.setTokens(accessToken);
-      tokenStorage.setCachedUser(fallbackUser);
-      Storage.setCurrentUser(fallbackUser);
-      syncedUser = fallbackUser;
+    // 1. Get authenticated user from session or parameter
+    let sbUser = supabaseUser;
+    if (!sbUser) {
+      const { data: { session } } = await supabase.auth.getSession();
+      sbUser = session?.user;
     }
 
-    setUser(syncedUser);
+    let syncedProfile: User;
+
+    // 2. Database is the source of truth: Upsert user profile into public.profiles
+    if (sbUser?.id) {
+      syncedProfile = await supabaseDataService.syncUserProfile(sbUser);
+    } else {
+      syncedProfile = EMPTY_USER;
+    }
+
+    // 3. Keep backend synchronized if available
+    try {
+      const res = await authService.supabaseLogin(accessToken);
+      if (res?.user) {
+        syncedProfile = { ...syncedProfile, ...res.user };
+      }
+    } catch (err: any) {
+      console.warn('[AuthContext] Backend /auth/supabase notice (using Supabase DB directly):', err?.message || err);
+    }
+
+    tokenStorage.setTokens(accessToken);
+    tokenStorage.setCachedUser(syncedProfile);
+    Storage.setCurrentUser(syncedProfile);
+    setUser(syncedProfile);
     setIsAuthenticated(true);
-    return syncedUser;
+    return syncedProfile;
   };
 
   const register = async (
@@ -244,12 +196,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateProfile = async (updates: Partial<User>) => {
+    if (user.id) {
+      try {
+        const updated = await supabaseDataService.updateUserProfile(user.id, updates);
+        setUser(updated);
+        tokenStorage.setCachedUser(updated);
+        Storage.setCurrentUser(updated);
+        // Also notify backend if available
+        await authService.updateProfile(updates).catch(() => {});
+        return;
+      } catch (err) {
+        console.warn('[AuthContext] Supabase profile update error, trying backend:', err);
+      }
+    }
     const updated = await authService.updateProfile(updates);
     setUser(updated);
   };
 
   const uploadPhoto = async (file: File): Promise<User> => {
     const updated = await authService.uploadAvatar(file);
+    if (user.id && (updated.avatar || updated.profileImage)) {
+      await supabaseDataService.updateUserProfile(user.id, {
+        avatar: updated.avatar || updated.profileImage,
+        profileImage: updated.avatar || updated.profileImage,
+      }).catch(() => {});
+    }
     setUser(updated);
     return updated;
   };

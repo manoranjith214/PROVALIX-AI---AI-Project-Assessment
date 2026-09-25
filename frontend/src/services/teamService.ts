@@ -1,5 +1,6 @@
 import { Team, TeamMember, TeamInvitation } from '../types';
 import { apiClient } from './api/apiClient';
+import { supabaseDataService } from './supabaseDataService';
 
 export const teamService = {
   /**
@@ -51,18 +52,29 @@ export const teamService = {
 
   async getTeams(): Promise<Team[]> {
     try {
+      // 1. Primary: Supabase PostgreSQL
+      const sbTeams = await supabaseDataService.getTeams();
+      if (sbTeams && sbTeams.length > 0) {
+        return sbTeams;
+      }
+
+      // 2. Fallback: Backend
       const data = await apiClient.get<any[]>('/teams');
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
         return data.map(this.mapBackendTeam);
       }
     } catch (err) {
-      console.warn('[teamService] getTeams error:', err);
+      console.warn('[teamService] getTeams notice:', err);
     }
     return [];
   },
 
   async getTeamById(id: string): Promise<Team | undefined> {
     try {
+      const sbTeams = await supabaseDataService.getTeams();
+      const match = sbTeams.find(t => t.id === id);
+      if (match) return match;
+
       const data = await apiClient.get<any>(`/teams/${id}`);
       if (data) {
         return this.mapBackendTeam(data);
@@ -95,6 +107,14 @@ export const teamService = {
   },
 
   async createTeam(name: string, logo?: string, maxSize = 4): Promise<Team> {
+    try {
+      const createdSb = await supabaseDataService.createTeam({ name, logo, maxSize });
+      apiClient.post('/teams', { name, logo, maxSize }).catch(() => {});
+      return createdSb;
+    } catch (err) {
+      console.warn('[teamService] Supabase createTeam notice, trying backend:', err);
+    }
+
     const data = await apiClient.post<any>('/teams', {
       name,
       logo: logo || undefined,

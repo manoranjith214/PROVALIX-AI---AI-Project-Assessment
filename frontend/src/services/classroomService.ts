@@ -6,6 +6,7 @@ import {
 import { Storage } from './storage';
 import { apiClient } from './api/apiClient';
 import { tokenStorage } from './api/tokenStorage';
+import { supabaseDataService } from './supabaseDataService';
 
 export function mapBackendClassroom(b: any): Classroom {
   let parsedResources: ClassroomResourceRequirement[] = [];
@@ -161,6 +162,13 @@ export function mapBackendSubmission(s: any): ClassroomSubmission {
 export const classroomService = {
   async getClassrooms(params?: { search?: string; status?: string }): Promise<Classroom[]> {
     try {
+      // 1. Primary: Supabase PostgreSQL
+      const sbClassrooms = await supabaseDataService.getClassrooms();
+      if (sbClassrooms && sbClassrooms.length > 0) {
+        return sbClassrooms;
+      }
+
+      // 2. Fallback: Backend
       const queryParams = new URLSearchParams();
       if (params?.search) queryParams.append('search', params.search);
       if (params?.status) queryParams.append('status', params.status);
@@ -168,24 +176,28 @@ export const classroomService = {
       
       const res = await apiClient.get<any>(url);
       const list = res.data?.data || res.data;
-      if (Array.isArray(list)) {
+      if (Array.isArray(list) && list.length > 0) {
         return list.map(mapBackendClassroom);
       }
     } catch (err) {
-      console.warn('[classroomService] Failed to fetch classrooms from backend:', err);
+      console.warn('[classroomService] Failed to fetch classrooms notice:', err);
     }
     return [];
   },
 
   async getClassroomById(id: string): Promise<Classroom | undefined> {
     try {
+      const sbClassrooms = await supabaseDataService.getClassrooms();
+      const match = sbClassrooms.find(c => c.id === id);
+      if (match) return match;
+
       const res = await apiClient.get<any>(`/classrooms/${id}`);
       const data = res.data?.data || res.data;
       if (data && data.id) {
         return mapBackendClassroom(data);
       }
     } catch (err) {
-      console.warn(`[classroomService] Failed to fetch classroom ${id} from backend:`, err);
+      console.warn(`[classroomService] Failed to fetch classroom ${id}:`, err);
     }
     return undefined;
   },
@@ -199,6 +211,36 @@ export const classroomService = {
     resources: ClassroomResourceRequirement[],
     options?: { logo?: string; minTeamSize?: number; maxTeamSize?: number }
   ): Promise<Classroom> {
+    try {
+      const createdSb = await supabaseDataService.createClassroom({
+        name,
+        description,
+        startDate,
+        submissionDeadline,
+        submissionMode,
+        resources,
+        logo: options?.logo,
+        minTeamSize: options?.minTeamSize,
+        maxTeamSize: options?.maxTeamSize,
+      });
+
+      apiClient.post('/classrooms', {
+        name,
+        description,
+        logo: options?.logo,
+        startDate,
+        deadline: submissionDeadline,
+        submissionMode,
+        minTeamSize: options?.minTeamSize,
+        maxTeamSize: options?.maxTeamSize,
+        resources,
+      }).catch(() => {});
+
+      return createdSb;
+    } catch (err: any) {
+      console.warn('[classroomService] Supabase createClassroom notice, trying backend:', err);
+    }
+
     try {
       const res = await apiClient.post<any>('/classrooms', {
         name,
