@@ -95,7 +95,7 @@ export const RegisterPage: React.FC = () => {
 
       setRegisteredEmail(email.trim());
       setIsRegistered(true);
-      success('Account created. Please verify your email before signing in.');
+      success('Account created successfully. Please check your email and click the verification link before signing in.');
     } catch (err: any) {
       const msg =
         err?.message?.includes('already registered') || err?.message?.includes('already exists')
@@ -140,7 +140,9 @@ export const RegisterPage: React.FC = () => {
             </div>
 
             <div className="p-4 rounded-xl bg-[#0F172A] border border-[#243047] text-left text-xs text-[#CBD5E1] space-y-2">
-              <p className="font-semibold text-sm text-[#F8FAFC]">Account created. Please verify your email before signing in.</p>
+              <p className="font-semibold text-sm text-[#F8FAFC]">
+                Account created successfully. Please check your email and click the verification link before signing in.
+              </p>
               <p className="text-[#94A3B8] leading-relaxed">
                 We sent a secure verification link to <strong className="text-[#F8FAFC]">{registeredEmail}</strong>.
                 Please click the link in your inbox to confirm your institutional email.

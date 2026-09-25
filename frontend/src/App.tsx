@@ -23,7 +23,7 @@ const LoginPage = React.lazy(() => import('./pages/auth/LoginPage').then(m => ({
 const RegisterPage = React.lazy(() => import('./pages/auth/RegisterPage').then(m => ({ default: m.RegisterPage })));
 const ForgotPasswordPage = React.lazy(() => import('./pages/auth/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })));
 const ResetPasswordPage = React.lazy(() => import('./pages/auth/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })));
-const AuthVerifyPage = React.lazy(() => import('./pages/auth/AuthVerifyPage').then(m => ({ default: m.AuthVerifyPage })));
+const AuthCallbackPage = React.lazy(() => import('./pages/auth/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
 
 // App Pages (Lazy Loaded)
 const DashboardPage = React.lazy(() => import('./pages/app/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -129,7 +129,8 @@ export function App() {
                   />
                   <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                   <Route path="/reset-password" element={<ResetPasswordPage />} />
-                  <Route path="/auth/verify" element={<AuthVerifyPage />} />
+                  <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                  <Route path="/auth/verify" element={<AuthCallbackPage />} />
 
                   {/* Protected SaaS App Routes */}
                   <Route

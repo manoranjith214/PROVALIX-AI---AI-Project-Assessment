@@ -30,9 +30,9 @@ export const supabase = createClient(
  */
 export const getEmailVerifyRedirectUrl = (): string => {
   if (typeof window === 'undefined') {
-    return 'https://provalix-ai.vercel.app/auth/verify';
+    return 'https://provalix-ai.vercel.app/auth/callback';
   }
-  return `${window.location.origin}/auth/verify`;
+  return `${window.location.origin}/auth/callback`;
 };
 
 /**

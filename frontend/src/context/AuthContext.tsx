@@ -23,7 +23,9 @@ interface RegisterExtra {
   year?: string;
   college?: string;
   avatarUrl?: string;
+  profile_image?: string;
   permanentId?: string;
+  permanent_user_id?: string;
 }
 
 interface AuthContextValue {
@@ -41,6 +43,7 @@ interface AuthContextValue {
   updateProfile: (updates: Partial<User>) => Promise<void>;
   uploadPhoto: (file: File) => Promise<User>;
   logout: () => Promise<void>;
+  setAuthenticatedUser: (profile: User) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -215,7 +218,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Generate unique Permanent User ID
-    const permanentId = extra?.permanentId || (await supabaseDataService.generateUniquePermanentId());
+    const permanentId = extra?.permanent_user_id || extra?.permanentId || (await supabaseDataService.generateUniquePermanentId());
+    const profileImg = extra?.profile_image || extra?.avatarUrl || null;
 
     // 3. Initiate Supabase Auth signup with user metadata
     const { data, error } = await supabase.auth.signUp({
@@ -225,11 +229,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         emailRedirectTo: getEmailVerifyRedirectUrl(),
         data: {
           full_name: name.trim(),
-          permanent_id: permanentId,
           department: extra?.department || 'Computer Science & Engineering',
           year: extra?.year || '1st Year',
           college: extra?.college || 'Apex Institute of Technology & Research',
-          avatar_url: extra?.avatarUrl || null,
+          profile_image: profileImg,
+          permanent_user_id: permanentId,
+          permanent_id: permanentId,
+          avatar_url: profileImg,
           role: 'Student',
         },
       },
@@ -264,6 +270,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) {
       throw new Error(error.message || 'Failed to resend verification email.');
     }
+  };
+
+  const setAuthenticatedUser = (profile: User) => {
+    setUser(profile);
+    setIsAuthenticated(true);
+    tokenStorage.setCachedUser(profile);
+    Storage.setCurrentUser(profile);
   };
 
   const updateProfile = async (updates: Partial<User>) => {
@@ -319,6 +332,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateProfile,
         uploadPhoto,
         logout,
+        setAuthenticatedUser,
       }}
     >
       {children}
