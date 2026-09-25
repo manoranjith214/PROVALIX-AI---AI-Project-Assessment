@@ -1,13 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabasePublishableKey =
+export const supabaseUrl =
+  import.meta.env.VITE_SUPABASE_URL || 'https://tbclerczuvetkaaljdhh.supabase.co';
+export const supabasePublishableKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  'sb_publishable_LfU3oC3fx_9TRhxy9ZHtUA_wjRreaBV';
 
-if (!supabaseUrl || !supabasePublishableKey) {
+if (!import.meta.env.VITE_SUPABASE_URL || (!import.meta.env.VITE_SUPABASE_ANON_KEY && !import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)) {
   console.warn(
-    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY) are not configured.'
+    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY) are not configured, using project defaults.'
   );
 }
 

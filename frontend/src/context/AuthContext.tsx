@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { tokenStorage } from '../services/api/tokenStorage';
 import { initializeStorage, Storage } from '../services/storage';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUrl, supabasePublishableKey } from '../lib/supabase';
 import { supabaseDataService } from '../services/supabaseDataService';
 import { authService } from '../services/authService';
 
@@ -249,8 +249,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
     });
 
+    console.log('[Supabase signUp Response] data:', data);
+    console.log('[Supabase signUp Response] error:', error);
+
     if (error) {
+      console.log('[Supabase signUp Response] error.message:', error.message);
+      console.log('[Supabase signUp Response] error.code:', error.code);
+      console.log('[Supabase signUp Response] error.status:', error.status);
+      console.log('[Supabase signUp Response] error.name:', error.name);
       console.error('SIGNUP ERROR (supabase.auth.signUp):', error);
+
       const msg = error.message?.toLowerCase() || '';
       if (
         msg.includes('already registered') ||
@@ -264,14 +272,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw dupError;
       }
 
-      // Safeguard against Supabase Auth returning "{}" as error.message (e.g. on AuthRetryableFetchError 500)
-      const rawMsg =
-        error.message && typeof error.message === 'string' && error.message.trim() !== '{}' && error.message.trim() !== '[object Object]'
-          ? error.message.trim()
-          : (error as any).error_description || (error as any).msg || '';
+      // If status is 500 or message is empty/stringified '{}', probe the actual Supabase error endpoint
+      let serverErrorMsg = '';
+      if (error.status === 500 || !error.message || error.message === '{}') {
+        try {
+          const probeRes = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+            method: 'POST',
+            headers: {
+              apikey: supabasePublishableKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: cleanEmail,
+              password,
+            }),
+          });
+          const probeData = await probeRes.json();
+          if (probeData?.msg) {
+            serverErrorMsg = probeData.msg;
+          } else if (probeData?.error_description) {
+            serverErrorMsg = probeData.error_description;
+          }
+        } catch {
+          // ignore probe error
+        }
+      }
 
-      const fallbackMsg = rawMsg || (error.status ? `Supabase Auth error (Status ${error.status})` : 'Registration failed');
-      const authErr: any = new Error(fallbackMsg);
+      let descriptiveMsg = '';
+      if (serverErrorMsg) {
+        if (serverErrorMsg.toLowerCase().includes('confirmation email')) {
+          descriptiveMsg = `Error sending confirmation email. In your Supabase Dashboard, go to Authentication > Providers > Email and turn OFF 'Confirm email', or configure a custom SMTP provider.`;
+        } else {
+          descriptiveMsg = serverErrorMsg;
+        }
+      } else {
+        const rawMsg =
+          error.message && typeof error.message === 'string' && error.message.trim() !== '{}' && error.message.trim() !== '[object Object]'
+            ? error.message.trim()
+            : (error as any).error_description || (error as any).msg || '';
+        descriptiveMsg = rawMsg || (error.status === 500 ? 'Server error occurred during signup (HTTP 500)' : 'Registration failed');
+      }
+
+      const authErr: any = new Error(descriptiveMsg);
       authErr.code = error.code || (error as any).error_code;
       authErr.status = error.status || (error as any).statusCode;
       authErr.name = error.name;
