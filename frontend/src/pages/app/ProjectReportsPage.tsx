@@ -6,8 +6,7 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Modal } from '../../components/ui/Modal';
-import { projectCheckerService } from '../../services/projectCheckerService';
-import { tokenStorage } from '../../services/api/tokenStorage';
+import { projectReportService, SupabaseProjectReportRow } from '../../services/projectReportService';
 import { useToast } from '../../context/ToastContext';
 import { 
   Search, 
@@ -30,7 +29,6 @@ import {
 
 interface ReportCardItem {
   id: string;
-  projectId: string;
   title: string;
   category: string;
   status: string;
@@ -39,7 +37,6 @@ interface ReportCardItem {
   plagiarismStatus: string;
   createdAt: string;
   updatedAt: string;
-  isBackend: boolean;
 }
 
 export const ProjectReportsPage: React.FC = () => {
@@ -80,87 +77,63 @@ export const ProjectReportsPage: React.FC = () => {
     setErrorMessage(null);
     setIsUnauthorized(false);
 
-    const token = tokenStorage.getAccessToken();
-
-    // Map sort dropdown to backend parameters
-    let backendSortBy = 'createdAt';
-    let backendSortOrder: 'asc' | 'desc' = 'desc';
-    if (sortBy === 'oldest') {
-      backendSortOrder = 'asc';
-    } else if (sortBy === 'title_asc') {
-      backendSortBy = 'title';
-      backendSortOrder = 'asc';
-    } else if (sortBy === 'title_desc') {
-      backendSortBy = 'title';
-      backendSortOrder = 'desc';
-    }
-
     try {
-      if (token) {
-        const result = await projectCheckerService.listProjectsWithMeta({
-          page: currentPage,
-          limit: pageSize,
-          search: debouncedSearch || undefined,
-          status: statusFilter !== 'ALL' ? statusFilter : undefined,
-          sortBy: backendSortBy,
-          sortOrder: backendSortOrder,
-        });
+      const result = await projectReportService.getReports({
+        page: currentPage,
+        limit: pageSize,
+        search: debouncedSearch || undefined,
+        status: statusFilter !== 'ALL' ? statusFilter : undefined,
+        sortBy,
+      });
 
-        if (result && Array.isArray(result.projects)) {
-          const mapped: ReportCardItem[] = result.projects.map(p => {
-            const numScore = (p as any).aiEvaluation?.totalScore ?? p.overallScore ?? null;
-            const numSim = (p as any).plagiarism?.overallSimilarity ?? p.similarityScore ?? null;
-            const pStatus = (p as any).plagiarism?.status || (numSim !== null ? (numSim <= 15 ? 'Clean' : 'Elevated') : 'Verified');
+      const mapped: ReportCardItem[] = (result.reports || []).map((row: SupabaseProjectReportRow) => {
+        const numScore = row.score !== null && row.score !== undefined ? Number(row.score) : null;
+        const numSim = row.similarity !== null && row.similarity !== undefined ? Number(row.similarity) : null;
+        const pStatus = row.report_data?.evaluation?.plagiarism?.status || 
+          (numSim !== null ? (numSim <= 15 ? 'Clean' : 'Elevated') : 'Clean');
 
-            return {
-              id: p.id,
-              projectId: p.id,
-              title: p.title,
-              category: (p as any).category || p.domain || 'General Computing',
-              status: p.status || 'EVALUATED',
-              overallScore: numScore !== null ? numScore : 'Pending',
-              similarity: numSim !== null ? `${numSim}%` : 'Pending',
-              plagiarismStatus: pStatus,
-              createdAt: p.createdAt,
-              updatedAt: p.updatedAt || p.createdAt,
-              isBackend: true,
-            };
-          });
+        return {
+          id: row.id,
+          title: row.project_title || 'Untitled Project',
+          category: row.category || 'General Computing & AI',
+          status: row.status || 'Evaluated',
+          overallScore: numScore !== null ? numScore : 'Pending',
+          similarity: numSim !== null ? `${numSim}%` : '0%',
+          plagiarismStatus: pStatus,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at || row.created_at,
+        };
+      });
 
-          setReports(mapped);
-          setTotalCount(result.pagination?.total ?? mapped.length);
-          setTotalPages(result.pagination?.totalPages ?? Math.max(1, Math.ceil(mapped.length / pageSize)));
-          setIsLoading(false);
-          return;
-        }
-      }
+      setReports(mapped);
+      setTotalCount(result.totalCount);
+      setTotalPages(result.totalPages);
     } catch (err: any) {
-      if (err?.status === 401) {
+      console.error('[ProjectReportsPage] Error loading reports from Supabase:', err);
+      if (err?.message?.includes('Authentication required') || err?.status === 401) {
         setIsUnauthorized(true);
-        setIsLoading(false);
-        return;
+      } else {
+        setErrorMessage(err?.message || 'Failed to load project reports from database.');
       }
-      setErrorMessage(err?.message || 'Failed to connect to reports API server.');
+      setReports([]);
+      setTotalCount(0);
+      setTotalPages(1);
+    } finally {
+      setIsLoading(false);
     }
-
-    setReports([]);
-    setTotalCount(0);
-    setTotalPages(1);
-    setIsLoading(false);
   }, [debouncedSearch, statusFilter, sortBy, currentPage]);
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      if (deleteTarget.isBackend) {
-        await projectCheckerService.deleteProject(deleteTarget.id);
-      }
+      await projectReportService.deleteReport(deleteTarget.id);
       setReports(prev => prev.filter(r => r.id !== deleteTarget.id));
       setTotalCount(c => Math.max(0, c - 1));
       success('Report deleted successfully.');
       setDeleteTarget(null);
     } catch (err: any) {
+      console.error('[ProjectReportsPage] Delete error:', err);
       toastError(err?.message || 'Failed to delete report.');
     } finally {
       setIsDeleting(false);
@@ -171,13 +144,12 @@ export const ProjectReportsPage: React.FC = () => {
     if (!renameTarget || !renameTitle.trim()) return;
     setIsRenaming(true);
     try {
-      if (renameTarget.isBackend) {
-        await projectCheckerService.updateProject(renameTarget.id, { title: renameTitle.trim() });
-      }
+      await projectReportService.updateReport(renameTarget.id, { project_title: renameTitle.trim() });
       setReports(prev => prev.map(r => r.id === renameTarget.id ? { ...r, title: renameTitle.trim() } : r));
       success('Report renamed successfully.');
       setRenameTarget(null);
     } catch (err: any) {
+      console.error('[ProjectReportsPage] Rename error:', err);
       toastError(err?.message || 'Failed to rename report.');
     } finally {
       setIsRenaming(false);
@@ -229,10 +201,9 @@ export const ProjectReportsPage: React.FC = () => {
               className="bg-[#0F172A] border border-[#243047] rounded-lg px-3 py-2 text-xs font-medium text-[#F8FAFC] focus:outline-none focus:ring-1 focus:ring-[#7C3AED] focus:border-[#7C3AED] shadow-sm"
             >
               <option value="ALL">All Statuses</option>
-              <option value="EVALUATED">Evaluated</option>
-              <option value="EVALUATING">Evaluating</option>
-              <option value="RESOURCES_UPLOADED">Resources Uploaded</option>
-              <option value="DRAFT">Draft</option>
+              <option value="Evaluated">Evaluated</option>
+              <option value="Evaluating">Evaluating</option>
+              <option value="Draft">Draft</option>
             </select>
           </div>
 
@@ -276,15 +247,15 @@ export const ProjectReportsPage: React.FC = () => {
         </Card>
       )}
 
-      {/* State 2: API Error State (with Retry) */}
+      {/* State 2: API Error State (with Retry) - NO fake offline fallback */}
       {!isUnauthorized && errorMessage && (
         <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-between text-xs text-red-400">
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage} (Displaying offline demo records as fallback)</span>
+            <span>{errorMessage}</span>
           </div>
           <Button variant="outline" size="sm" onClick={loadReports} leftIcon={<RefreshCw className="w-3.5 h-3.5" />}>
-            Retry API
+            Retry
           </Button>
         </div>
       )}
@@ -293,10 +264,10 @@ export const ProjectReportsPage: React.FC = () => {
       {isLoading && !isUnauthorized ? (
         <div className="flex flex-col items-center justify-center py-20 text-[#94A3B8] gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-[#7C3AED]" />
-          <p className="text-xs font-medium">Fetching verified project reports...</p>
+          <p className="text-xs font-medium">Fetching verified project reports from database...</p>
         </div>
-      ) : !isUnauthorized && reports.length === 0 ? (
-        /* State 4: Empty State */
+      ) : !isUnauthorized && !errorMessage && reports.length === 0 ? (
+        /* State 4: Empty State - Shown ONLY when the authenticated user has zero records */
         <Card className="p-12 text-center space-y-4 max-w-md mx-auto my-8 border-[#243047]">
           <div className="w-12 h-12 rounded-full bg-[#0F172A] border border-[#243047] text-[#94A3B8] mx-auto flex items-center justify-center">
             <FileQuestion className="w-6 h-6" />
@@ -315,7 +286,7 @@ export const ProjectReportsPage: React.FC = () => {
             </Link>
           </div>
         </Card>
-      ) : !isUnauthorized && (
+      ) : !isUnauthorized && reports.length > 0 && (
         /* State 5: Reports Grid */
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

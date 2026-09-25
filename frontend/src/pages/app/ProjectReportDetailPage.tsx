@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { projectCheckerService } from '../../services/projectCheckerService';
+import { projectReportService } from '../../services/projectReportService';
 import { StandaloneAIEvaluation, ProjectDetails } from '../../types';
 import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -54,6 +55,29 @@ export const ProjectReportDetailPage: React.FC = () => {
       setErrorStatus(null);
       setErrorMessage(null);
 
+      // 1. Direct Supabase load from project_reports table
+      try {
+        const reportRow = await projectReportService.getReportById(id);
+        if (isMounted && reportRow) {
+          const mapped = projectReportService.mapRowToDetails(reportRow);
+          setProject(mapped.project);
+          setEvaluation(mapped.evaluation);
+          setIsLoading(false);
+          return;
+        }
+      } catch (err: any) {
+        console.error('[ProjectReportDetailPage] Direct Supabase fetch error:', err);
+        if (err?.message?.includes('Authentication required') || err?.status === 401) {
+          if (isMounted) {
+            setErrorStatus(401);
+            setErrorMessage('Authentication required to view this project report.');
+            setIsLoading(false);
+          }
+          return;
+        }
+      }
+
+      // 2. Fallback to Express backend (if legacy id or server is up)
       try {
         const reportData = await projectCheckerService.getReport(id);
         if (isMounted && reportData) {
@@ -95,23 +119,53 @@ export const ProjectReportDetailPage: React.FC = () => {
   const handleSavePDF = async () => {
     success('Preparing official Provalix AI Project Audit PDF...');
     try {
-      if (id) {
-        const pdfData = await projectCheckerService.getPdfReport(id);
-        if (pdfData?.markdown) {
-          // If markdown document is returned, allow direct download or print
-          const blob = new Blob([pdfData.markdown], { type: 'text/markdown;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `Provalix-Audit-Report-${id}.md`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }
+      if (project && evaluation) {
+        const markdown = `# PROVALIX AI - PROJECT EVALUATION AUDIT REPORT
+**Project Title:** ${project.title}
+**Category / Domain:** ${project.category}
+**Overall Score:** ${evaluation.overallScore}/100
+**Plagiarism Similarity:** ${evaluation.plagiarism?.overallSimilarity}% (${evaluation.plagiarism?.status})
+**Evaluated At:** ${new Date(evaluation.evaluatedAt).toLocaleString()}
+
+---
+
+## 1. Executive Summary
+${evaluation.summary}
+
+## 2. Evaluation Criteria Rubric Scores
+${Object.values(evaluation.criteria).map(c => `- **${c.name}**: ${c.obtainedScore}/${c.maxScore} (${c.feedback})`).join('\n')}
+
+## 3. Plagiarism & Integrity Analysis
+- **Code Similarity:** ${evaluation.plagiarism?.codeSimilarity}%
+- **Report Similarity:** ${evaluation.plagiarism?.reportSimilarity}%
+- **Overall Similarity:** ${evaluation.plagiarism?.overallSimilarity}%
+- **Integrity Status:** ${evaluation.plagiarism?.status}
+
+## 4. Architectural & Code Analysis
+${evaluation.codeAnalysis}
+
+## 5. Technical Rigor & Documentation
+${evaluation.technicalAnalysis}
+${evaluation.documentationAnalysis}
+
+## 6. Identified Strengths
+${evaluation.strengths.map(s => `- ${s}`).join('\n')}
+
+## 7. Actionable Improvement Plan
+${evaluation.actionableSuggestions.map(s => `- ${s}`).join('\n')}
+`;
+        const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Provalix-Audit-Report-${id}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
       }
-    } catch {
-      // Fallback to print
+    } catch (err) {
+      console.error('[ProjectReportDetailPage] PDF generation error:', err);
     }
     setTimeout(() => {
       window.print();
@@ -195,10 +249,16 @@ export const ProjectReportDetailPage: React.FC = () => {
     if (!id) return;
     setIsDeleting(true);
     try {
-      await projectCheckerService.deleteProject(id);
+      try {
+        await projectReportService.deleteReport(id);
+      } catch (err: any) {
+        console.warn('[ProjectReportDetailPage] Direct Supabase delete failed, attempting backend fallback:', err?.message);
+        await projectCheckerService.deleteProject(id);
+      }
       success('Report deleted successfully.');
       navigate('/project-reports');
     } catch (err: any) {
+      console.error('[ProjectReportDetailPage] Delete error:', err);
       toastError(err?.message || 'Failed to delete report.');
     } finally {
       setIsDeleting(false);
@@ -209,11 +269,17 @@ export const ProjectReportDetailPage: React.FC = () => {
     if (!id || !renameTitle.trim()) return;
     setIsRenaming(true);
     try {
-      await projectCheckerService.updateProject(id, { title: renameTitle.trim() });
+      try {
+        await projectReportService.updateReport(id, { project_title: renameTitle.trim() });
+      } catch (err: any) {
+        console.warn('[ProjectReportDetailPage] Direct Supabase rename failed, attempting backend fallback:', err?.message);
+        await projectCheckerService.updateProject(id, { title: renameTitle.trim() });
+      }
       setProject(prev => prev ? { ...prev, title: renameTitle.trim() } : null);
       success('Report renamed successfully.');
       setIsRenameModalOpen(false);
     } catch (err: any) {
+      console.error('[ProjectReportDetailPage] Rename error:', err);
       toastError(err?.message || 'Failed to rename report.');
     } finally {
       setIsRenaming(false);

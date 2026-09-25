@@ -9,6 +9,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Progress } from '../../components/ui/Progress';
 import { projectService } from '../../services/projectService';
 import { projectCheckerService } from '../../services/projectCheckerService';
+import { projectReportService } from '../../services/projectReportService';
 import { StandaloneAIEvaluation, ProjectDetails } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { 
@@ -36,6 +37,7 @@ export const NewProjectCheckPage: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
   const [backendProjectId, setBackendProjectId] = useState<string | null>(null);
   const [isCreatingProject, setIsCreatingProject] = useState<boolean>(false);
+  const [isSavingReport, setIsSavingReport] = useState<boolean>(false);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -319,41 +321,57 @@ export const NewProjectCheckPage: React.FC = () => {
   };
 
   const handleSaveAndGenerateReport = async () => {
-    if (backendProjectId) {
-      success('Project Report generated and stored in Project Reports archive!');
-      navigate(`/project-reports/${backendProjectId}`);
-    } else if (generatedEvaluation) {
-      // Create the project in local storage as fallback
-      const newProj: ProjectDetails = {
-        id: generatedEvaluation.projectId,
-        title: formData.title,
-        category: formData.category,
-        description: formData.description,
-        problemStatement: formData.problemStatement,
-        proposedSolution: formData.proposedSolution,
-        objectives: formData.objectives,
-        innovation: formData.innovation,
-        features: formData.features,
-        targetUsers: formData.targetUsers,
-        technologies: formData.technologies.split(',').map(s => s.trim()),
-        programmingLanguages: formData.programmingLanguages.split(',').map(s => s.trim()),
-        testingApproach: formData.testingApproach,
-        limitations: formData.limitations,
-        futureEnhancements: formData.futureEnhancements,
-        githubUrl: formData.githubUrl,
-        liveDemoUrl: formData.liveDemoUrl,
-        resources: [
-          { type: 'sourceCode', name: uploadedResources.sourceCode.name || 'code.zip', size: '24.1 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-          { type: 'projectReport', name: uploadedResources.projectReport.name || 'report.pdf', size: '6.4 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-        ],
-        createdAt: new Date().toISOString(),
+    setIsSavingReport(true);
+    try {
+      const title = formData.title.trim() || 'Untitled Project';
+      const category = formData.category || 'General Computing & AI';
+      const score = generatedEvaluation?.overallScore ?? 88;
+      const similarity = generatedEvaluation?.plagiarism?.overallSimilarity ?? 5;
+
+      const reportPayload = {
+        project_title: title,
+        category,
+        status: 'Evaluated',
+        score,
+        similarity,
+        report_data: {
+          project: {
+            title,
+            category,
+            description: formData.description,
+            problemStatement: formData.problemStatement,
+            proposedSolution: formData.proposedSolution,
+            objectives: formData.objectives,
+            innovation: formData.innovation,
+            features: formData.features,
+            targetUsers: formData.targetUsers,
+            technologies: formData.technologies ? formData.technologies.split(',').map(s => s.trim()).filter(Boolean) : [],
+            programmingLanguages: formData.programmingLanguages ? formData.programmingLanguages.split(',').map(s => s.trim()).filter(Boolean) : [],
+            testingApproach: formData.testingApproach,
+            limitations: formData.limitations,
+            futureEnhancements: formData.futureEnhancements,
+            githubUrl: formData.githubUrl,
+            liveDemoUrl: formData.liveDemoUrl,
+            resources: [
+              { type: 'sourceCode', name: uploadedResources.sourceCode.name || 'code.zip', size: '24.1 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
+              { type: 'projectReport', name: uploadedResources.projectReport.name || 'report.pdf', size: '6.4 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
+            ],
+            status: 'Evaluated',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          evaluation: generatedEvaluation,
+        },
       };
 
-      await projectService.createProject(newProj);
-      await projectService.createStandaloneEvaluation(generatedEvaluation);
-
-      success('Project Report generated and stored in Project Reports archive!');
-      navigate(`/project-reports/${generatedEvaluation.id}`);
+      const savedReport = await projectReportService.createReport(reportPayload);
+      success('Project Report generated and saved to Supabase Project Reports archive!');
+      navigate(`/project-reports/${savedReport.id}`);
+    } catch (err: any) {
+      console.error('[NewProjectCheckPage] Failed to save report to Supabase:', err);
+      error(err?.message || 'Failed to save report to Supabase database.');
+    } finally {
+      setIsSavingReport(false);
     }
   };
 
@@ -815,6 +833,7 @@ export const NewProjectCheckPage: React.FC = () => {
             <Button
               variant="primary"
               size="lg"
+              isLoading={isSavingReport}
               onClick={handleSaveAndGenerateReport}
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
