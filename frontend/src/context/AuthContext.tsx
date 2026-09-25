@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { tokenStorage } from '../services/api/tokenStorage';
 import { initializeStorage, Storage } from '../services/storage';
-import { supabase, getEmailVerifyRedirectUrl } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { supabaseDataService } from '../services/supabaseDataService';
 import { authService } from '../services/authService';
 
@@ -38,8 +38,7 @@ interface AuthContextValue {
     email: string,
     password: string,
     extra?: RegisterExtra
-  ) => Promise<{ user: any; needsVerification: boolean }>;
-  resendVerificationEmail: (email: string) => Promise<void>;
+  ) => Promise<User>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   uploadPhoto: (file: File) => Promise<User>;
   logout: () => Promise<void>;
@@ -85,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        // Check Provalix backend fallback if active
+        // Secondary check: Provalix backend fallback
         const accessToken = tokenStorage.getAccessToken();
         if (accessToken) {
           try {
@@ -171,12 +170,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (error) {
       const msg = error.message?.toLowerCase() || '';
-      if (msg.includes('email not confirmed') || msg.includes('not confirmed') || error.status === 400 && msg.includes('confirm')) {
-        const unverifiedError: any = new Error('Please verify your email address before signing in.');
-        unverifiedError.code = 'EMAIL_NOT_CONFIRMED';
-        unverifiedError.email = emailToAuth;
-        throw unverifiedError;
-      }
       if (msg.includes('invalid login credentials') || msg.includes('invalid credentials')) {
         throw new Error('Invalid email/User ID or password.');
       }
@@ -201,32 +194,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /**
-   * New Email & Password Registration with email confirmation
+   * New Email & Password Registration without email verification requirement.
+   * Creates Supabase user, establishes session, syncs profile, and redirects to dashboard.
    */
   const register = async (
     name: string,
     email: string,
     password: string,
     extra?: RegisterExtra
-  ): Promise<{ user: any; needsVerification: boolean }> => {
+  ): Promise<User> => {
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. One Account Per Email check: database level verification
+    // 1. Duplicate check: One email = one account
     const emailExists = await supabaseDataService.checkEmailExists(cleanEmail);
     if (emailExists) {
-      throw new Error('This email is already registered. Please sign in instead.');
+      throw new Error('An account with this email already exists. Please sign in.');
     }
 
-    // 2. Generate unique Permanent User ID
-    const permanentId = extra?.permanent_user_id || extra?.permanentId || (await supabaseDataService.generateUniquePermanentId());
+    // 2. Auto-generate unique Permanent User ID
+    const permanentId =
+      extra?.permanent_user_id ||
+      extra?.permanentId ||
+      (await supabaseDataService.generateUniquePermanentId());
     const profileImg = extra?.profile_image || extra?.avatarUrl || null;
 
-    // 3. Initiate Supabase Auth signup with user metadata
+    // 3. Create Supabase Auth user with profile metadata
     const { data, error } = await supabase.auth.signUp({
       email: cleanEmail,
       password,
       options: {
-        emailRedirectTo: getEmailVerifyRedirectUrl(),
         data: {
           full_name: name.trim(),
           department: extra?.department || 'Computer Science & Engineering',
@@ -243,33 +239,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (error) {
       const msg = error.message?.toLowerCase() || '';
-      if (msg.includes('already registered') || msg.includes('user already exists')) {
-        throw new Error('This email is already registered. Please sign in instead.');
+      if (
+        msg.includes('already registered') ||
+        msg.includes('user already exists') ||
+        msg.includes('unique constraint') ||
+        error.status === 422
+      ) {
+        throw new Error('An account with this email already exists. Please sign in.');
       }
       throw new Error(error.message || 'Registration failed. Please check your details and try again.');
     }
 
-    return {
-      user: data.user,
-      needsVerification: !data.session, // True when email confirmation is required
-    };
-  };
+    let activeSession = data.session;
+    let authUser = data.user;
 
-  /**
-   * Resend Verification Email
-   */
-  const resendVerificationEmail = async (email: string): Promise<void> => {
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: email.trim().toLowerCase(),
-      options: {
-        emailRedirectTo: getEmailVerifyRedirectUrl(),
-      },
-    });
-
-    if (error) {
-      throw new Error(error.message || 'Failed to resend verification email.');
+    // If session was not returned immediately, sign in immediately with credentials
+    if (!activeSession) {
+      const loginRes = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
+      if (loginRes.data.session) {
+        activeSession = loginRes.data.session;
+        authUser = loginRes.data.user;
+      }
     }
+
+    // 4. Create/sync user profile in public.profiles table
+    let profile: User;
+    if (authUser) {
+      profile = await supabaseDataService.syncUserProfile({
+        ...authUser,
+        user_metadata: {
+          full_name: name.trim(),
+          department: extra?.department || 'Computer Science & Engineering',
+          year: extra?.year || '1st Year',
+          college: extra?.college || 'Apex Institute of Technology & Research',
+          permanent_id: permanentId,
+          permanent_user_id: permanentId,
+          avatar_url: profileImg,
+        },
+      });
+    } else {
+      profile = {
+        id: '',
+        name: name.trim(),
+        email: cleanEmail,
+        permanentId,
+        department: extra?.department || 'Computer Science & Engineering',
+        year: extra?.year || '1st Year',
+        college: extra?.college || 'Apex Institute of Technology & Research',
+        role: 'Student',
+      };
+    }
+
+    // 5. Store session and set authenticated user state
+    if (activeSession) {
+      tokenStorage.setTokens(activeSession.access_token, activeSession.refresh_token);
+    }
+    tokenStorage.setCachedUser(profile);
+    Storage.setCurrentUser(profile);
+    setUser(profile);
+    setIsAuthenticated(true);
+
+    return profile;
   };
 
   const setAuthenticatedUser = (profile: User) => {
@@ -328,7 +361,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         register,
-        resendVerificationEmail,
         updateProfile,
         uploadPhoto,
         logout,

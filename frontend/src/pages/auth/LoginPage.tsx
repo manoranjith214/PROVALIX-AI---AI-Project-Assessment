@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
+import { Mail, ArrowRight, Loader2 } from 'lucide-react';
 import { AuthLayout } from '../../components/auth/AuthLayout';
 import { AuthCard } from '../../components/auth/AuthCard';
 import { AuthInput } from '../../components/auth/AuthInput';
@@ -18,13 +18,8 @@ export const LoginPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
   const [formError, setFormError] = useState('');
 
-  // Unverified account state
-  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
-  const [isResending, setIsResending] = useState(false);
-  const [resendSuccess, setResendSuccess] = useState(false);
-
-  const { login, resendVerificationEmail } = useAuth();
-  const { success, error: toastError } = useToast();
+  const { login } = useAuth();
+  const { success } = useToast();
   const navigate = useNavigate();
 
   const validate = () => {
@@ -65,46 +60,20 @@ export const LoginPage: React.FC = () => {
     if (!validate()) return;
 
     setFormError('');
-    setUnverifiedEmail(null);
-    setResendSuccess(false);
     setIsLoading(true);
 
     try {
       await login(identifier.trim(), password);
       success('Logged in successfully. Welcome to Provalix AI.');
-      navigate('/dashboard');
+      navigate('/dashboard', { replace: true });
     } catch (err: any) {
-      if (err?.code === 'EMAIL_NOT_CONFIRMED' || err?.message?.toLowerCase().includes('verify your email')) {
-        setUnverifiedEmail(err.email || (identifier.includes('@') ? identifier.trim() : null));
-        setFormError('Please verify your email address before signing in.');
-      } else if (err?.message?.includes('Invalid email/User ID or password')) {
+      if (err?.message?.includes('Invalid email/User ID or password')) {
         setFormError('Invalid email/User ID or password.');
       } else {
         setFormError(err?.message || 'Unable to sign in. Please check your credentials.');
       }
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    if (!unverifiedEmail && !identifier.includes('@')) {
-      toastError('Please enter your email to resend verification.');
-      return;
-    }
-
-    const emailToSend = unverifiedEmail || identifier.trim();
-    setIsResending(true);
-    setResendSuccess(false);
-
-    try {
-      await resendVerificationEmail(emailToSend);
-      setResendSuccess(true);
-      success('Verification email resent. Please check your inbox.');
-    } catch (err: any) {
-      toastError(err?.message || 'Failed to resend verification email.');
-    } finally {
-      setIsResending(false);
     }
   };
 
@@ -118,43 +87,10 @@ export const LoginPage: React.FC = () => {
         {formError && (
           <div
             role="alert"
-            className="mb-6 p-3.5 rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/20 text-[#EF4444] text-xs font-medium space-y-2 animate-in fade-in duration-200"
+            className="mb-6 p-3.5 rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/20 text-[#EF4444] text-xs font-medium flex items-center gap-2 animate-in fade-in duration-200"
           >
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
-              <span>{formError}</span>
-            </div>
-
-            {/* Unverified email resend action */}
-            {unverifiedEmail && (
-              <div className="pt-2 border-t border-[#EF4444]/20 flex items-center justify-between">
-                <span className="text-slate-300">Need a new link?</span>
-                <button
-                  type="button"
-                  onClick={handleResend}
-                  disabled={isResending}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A78BFA] hover:text-[#C4B5FD] transition-colors underline disabled:opacity-50"
-                >
-                  {isResending ? (
-                    <>
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span>Sending...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-3 h-3" />
-                      <span>Resend verification email</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {resendSuccess && (
-          <div className="mb-4 p-3 rounded-xl bg-[#22C55E]/10 border border-[#22C55E]/20 text-xs text-[#22C55E] flex items-center gap-2">
-            <span>Verification email sent! Check your inbox and spam folder.</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
+            <span>{formError}</span>
           </div>
         )}
 
@@ -169,7 +105,6 @@ export const LoginPage: React.FC = () => {
               setIdentifier(e.target.value);
               if (identifierError) setIdentifierError('');
               if (formError) setFormError('');
-              if (unverifiedEmail) setUnverifiedEmail(null);
             }}
             placeholder="alex.rivera@institution.edu or PRV-10482"
             leftIcon={<Mail className="w-4 h-4" />}

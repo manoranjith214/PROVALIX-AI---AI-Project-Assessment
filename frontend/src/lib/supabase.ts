@@ -25,17 +25,6 @@ export const supabase = createClient(
 );
 
 /**
- * Resolves the email verification redirect URL:
- * Automatically uses current origin (e.g. http://localhost:5173/auth/verify or https://provalix-ai.vercel.app/auth/verify)
- */
-export const getEmailVerifyRedirectUrl = (): string => {
-  if (typeof window === 'undefined') {
-    return 'https://provalix-ai.vercel.app/auth/callback';
-  }
-  return `${window.location.origin}/auth/callback`;
-};
-
-/**
  * Resolves the password reset redirect URL:
  */
 export const getPasswordResetRedirectUrl = (): string => {
