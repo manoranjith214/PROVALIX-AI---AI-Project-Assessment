@@ -7,7 +7,6 @@ const router = Router();
 
 router.post('/register', authRateLimiter, (req, res, next) => authController.register(req, res, next));
 router.post('/login', authRateLimiter, (req, res, next) => authController.login(req, res, next));
-router.post('/google', authRateLimiter, (req, res, next) => authController.googleLogin(req, res, next));
 router.post('/supabase', authRateLimiter, (req, res, next) => authController.supabaseLogin(req, res, next));
 router.post('/forgot-password', authRateLimiter, (req, res, next) => authController.forgotPassword(req, res, next));
 router.post('/reset-password', authRateLimiter, (req, res, next) => authController.resetPassword(req, res, next));

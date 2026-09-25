@@ -111,28 +111,6 @@ export const authService = {
   },
 
   /**
-   * Authenticate via Google OAuth backend endpoint
-   */
-  async googleLogin(payload?: { token?: string; accessToken?: string }): Promise<AuthResult> {
-    const token = payload?.accessToken || payload?.token;
-    if (token) {
-      return this.supabaseLogin(token);
-    }
-    const data = await apiClient.post<AuthResult>('/auth/google', payload || {});
-
-    const user = normalizeUser(data.user);
-    tokenStorage.setTokens(data.accessToken, data.refreshToken);
-    tokenStorage.setCachedUser(user);
-    Storage.setCurrentUser(user);
-
-    return {
-      user,
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-    };
-  },
-
-  /**
    * Register a new user on real backend
    */
   async register(

@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { KeyRound, ArrowRight, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowRight, ArrowLeft, CheckCircle2, Loader2, KeyRound } from 'lucide-react';
 import { AuthLayout } from '../../components/auth/AuthLayout';
 import { AuthCard } from '../../components/auth/AuthCard';
-import { AuthInput } from '../../components/auth/AuthInput';
 import { AuthPasswordField } from '../../components/auth/AuthPasswordField';
 import { PasswordStrengthMeter, evaluatePassword } from '../../components/auth/PasswordStrengthMeter';
+import { supabase } from '../../lib/supabase';
 import { authService } from '../../services/authService';
 import { useToast } from '../../context/ToastContext';
 
@@ -19,9 +19,9 @@ export const ResetPasswordPage: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
 
   // Field errors
-  const [tokenError, setTokenError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [confirmError, setConfirmError] = useState('');
   const [formError, setFormError] = useState('');
@@ -29,22 +29,35 @@ export const ResetPasswordPage: React.FC = () => {
   const { success } = useToast();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    // If incoming with a PKCE code from Supabase password reset email
+    const code = searchParams.get('code');
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (!error) {
+          setSessionReady(true);
+        } else {
+          console.warn('[ResetPassword] Code exchange notice:', error.message);
+        }
+      });
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          setSessionReady(true);
+        }
+      });
+    }
+  }, [searchParams]);
+
   const validate = () => {
     let isValid = true;
-
-    if (!token.trim()) {
-      setTokenError('Reset token is required');
-      isValid = false;
-    } else {
-      setTokenError('');
-    }
 
     const { allValid } = evaluatePassword(newPassword);
     if (!newPassword) {
       setPasswordError('New password is required');
       isValid = false;
     } else if (!allValid) {
-      setPasswordError('Password must satisfy all 5 requirements');
+      setPasswordError('Password does not meet the required security requirements.');
       isValid = false;
     } else {
       setPasswordError('');
@@ -54,7 +67,7 @@ export const ResetPasswordPage: React.FC = () => {
       setConfirmError('Confirm your new password');
       isValid = false;
     } else if (newPassword !== confirmPassword) {
-      setConfirmError('Passwords do not match');
+      setConfirmError('Passwords do not match.');
       isValid = false;
     } else {
       setConfirmError('');
@@ -73,16 +86,31 @@ export const ResetPasswordPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      await authService.resetPassword({
-        token: token.trim(),
-        newPassword,
+      // 1. Supabase Auth update password
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
       });
+
+      if (error) {
+        // Fallback to custom backend token if provided
+        if (token) {
+          await authService.resetPassword({
+            token: token.trim(),
+            newPassword,
+          });
+        } else {
+          throw error;
+        }
+      }
+
       setIsSuccess(true);
       success('Your password has been reset successfully.');
+      // Sign out from recovery session so user signs in cleanly
+      await supabase.auth.signOut().catch(() => {});
     } catch (err: any) {
       setFormError(
         err?.message?.includes('expired') || err?.message?.includes('Invalid')
-          ? 'Invalid or expired password reset token. Please request a new link.'
+          ? 'Your reset link has expired. Please request a new verification email.'
           : err?.message || 'Failed to reset password. Please try again.'
       );
     } finally {
@@ -109,25 +137,6 @@ export const ResetPasswordPage: React.FC = () => {
 
         {!isSuccess ? (
           <form onSubmit={handleReset} className="space-y-4" noValidate>
-            {!urlToken && (
-              <AuthInput
-                label="Reset Token"
-                id="reset-token"
-                type="text"
-                value={token}
-                onChange={e => {
-                  setToken(e.target.value);
-                  if (tokenError) setTokenError('');
-                  if (formError) setFormError('');
-                }}
-                placeholder="Enter reset token from email"
-                leftIcon={<KeyRound className="w-4 h-4" />}
-                error={tokenError}
-                required
-                disabled={isLoading}
-              />
-            )}
-
             <AuthPasswordField
               label="New Password"
               id="reset-new-password"
@@ -137,7 +146,7 @@ export const ResetPasswordPage: React.FC = () => {
                 if (passwordError) setPasswordError('');
                 if (formError) setFormError('');
                 if (confirmPassword && e.target.value !== confirmPassword) {
-                  setConfirmError('Passwords do not match');
+                  setConfirmError('Passwords do not match.');
                 } else if (confirmPassword && e.target.value === confirmPassword) {
                   setConfirmError('');
                 }
@@ -158,7 +167,7 @@ export const ResetPasswordPage: React.FC = () => {
                 if (confirmError) setConfirmError('');
                 if (formError) setFormError('');
                 if (newPassword && e.target.value !== newPassword) {
-                  setConfirmError('Passwords do not match');
+                  setConfirmError('Passwords do not match.');
                 } else if (newPassword && e.target.value === newPassword) {
                   setConfirmError('');
                 }
@@ -181,7 +190,7 @@ export const ResetPasswordPage: React.FC = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Resetting password...</span>
+                  <span>Updating password...</span>
                 </>
               ) : (
                 <>

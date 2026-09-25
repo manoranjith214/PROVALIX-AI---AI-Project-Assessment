@@ -25,7 +25,7 @@ export function mapSupabaseProfile(p: any): User {
     registerNumber: p.register_number || undefined,
     expectedGraduationYear: p.expected_graduation_year || undefined,
     skills: p.skills || undefined,
-    authProvider: 'google',
+    authProvider: 'email',
     createdAt: p.created_at || new Date().toISOString(),
     updatedAt: p.updated_at || new Date().toISOString(),
     lastLoginAt: new Date().toISOString(),
@@ -38,7 +38,7 @@ export function mapSupabaseProfile(p: any): User {
  */
 export const supabaseDataService = {
   // ==========================================
-  // PROFILE PERSISTENCE (public.profiles)
+  // AUTHENTICATION & PROFILE HELPERS
   // ==========================================
 
   async getCurrentSessionUser() {
@@ -46,11 +46,80 @@ export const supabaseDataService = {
     return session?.user ?? null;
   },
 
-  async syncUserProfile(user: { id: string; email?: string; full_name?: string; avatar_url?: string }): Promise<User> {
-    const permanentId = `PRV-${user.id.slice(0, 5)}`;
+  /**
+   * Checks whether an institutional/personal email is already registered.
+   */
+  async checkEmailExists(email: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('check_email_exists', {
+        p_email: email.trim().toLowerCase(),
+      });
+      if (error) {
+        // Fallback: direct profiles query (if policy allows or if table accessible)
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', email.trim().toLowerCase())
+          .maybeSingle();
+        return Boolean(profile);
+      }
+      return Boolean(data);
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Resolves email associated with a Permanent User ID (e.g. PRV-10482).
+   */
+  async getEmailByPermanentId(permanentId: string): Promise<string | null> {
+    try {
+      const { data, error } = await supabase.rpc('get_email_by_permanent_id', {
+        p_permanent_id: permanentId.trim().toUpperCase(),
+      });
+      if (error || !data) {
+        return null;
+      }
+      return data as string;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Generates a unique Permanent User ID formatted as PRV-XXXXX.
+   */
+  async generateUniquePermanentId(): Promise<string> {
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const randomNum = Math.floor(10000 + Math.random() * 90000);
+      const candidate = `PRV-${randomNum}`;
+      const existingEmail = await this.getEmailByPermanentId(candidate);
+      if (!existingEmail) {
+        return candidate;
+      }
+    }
+    return `PRV-${Math.floor(10000 + Math.random() * 90000)}`;
+  },
+
+  async syncUserProfile(user: {
+    id: string;
+    email?: string;
+    full_name?: string;
+    avatar_url?: string;
+    permanent_id?: string;
+    department?: string;
+    year?: string;
+    college?: string;
+    user_metadata?: any;
+  }): Promise<User> {
+    const meta = user.user_metadata || {};
     const email = user.email || '';
-    const fullName = user.full_name || email.split('@')[0] || 'User';
-    const avatarUrl = user.avatar_url || null;
+    const fullName = user.full_name || meta.full_name || meta.name || email.split('@')[0] || 'User';
+    const avatarUrl = user.avatar_url || meta.avatar_url || meta.profile_image || null;
+    const permanentId = user.permanent_id || meta.permanent_id || `PRV-${Math.floor(10000 + Math.random() * 90000)}`;
+    const department = user.department || meta.department || 'Computer Science & Engineering';
+    const year = user.year || meta.year || '1st Year';
+    const college = user.college || meta.college || 'Apex Institute of Technology & Research';
 
     const payload = {
       id: user.id,
@@ -58,6 +127,10 @@ export const supabaseDataService = {
       full_name: fullName,
       avatar_url: avatarUrl,
       permanent_id: permanentId,
+      department,
+      year,
+      college,
+      role: 'Student',
       updated_at: new Date().toISOString(),
     };
 

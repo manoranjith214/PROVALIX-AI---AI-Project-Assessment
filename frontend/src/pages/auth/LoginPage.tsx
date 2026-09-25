@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, ArrowRight, Loader2 } from 'lucide-react';
+import { Mail, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import { AuthLayout } from '../../components/auth/AuthLayout';
 import { AuthCard } from '../../components/auth/AuthCard';
 import { AuthInput } from '../../components/auth/AuthInput';
 import { AuthPasswordField } from '../../components/auth/AuthPasswordField';
-import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
-import { AuthDivider } from '../../components/auth/AuthDivider';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 
@@ -14,15 +12,19 @@ export const LoginPage: React.FC = () => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   // Field validation errors
   const [identifierError, setIdentifierError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [formError, setFormError] = useState('');
 
-  const { login, signInWithGoogle } = useAuth();
-  const { success } = useToast();
+  // Unverified account state
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [isResending, setIsResending] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
+
+  const { login, resendVerificationEmail } = useAuth();
+  const { success, error: toastError } = useToast();
   const navigate = useNavigate();
 
   const validate = () => {
@@ -58,11 +60,13 @@ export const LoginPage: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isLoading || isGoogleLoading) return;
+    if (isLoading) return;
 
     if (!validate()) return;
 
     setFormError('');
+    setUnverifiedEmail(null);
+    setResendSuccess(false);
     setIsLoading(true);
 
     try {
@@ -70,32 +74,37 @@ export const LoginPage: React.FC = () => {
       success('Logged in successfully. Welcome to Provalix AI.');
       navigate('/dashboard');
     } catch (err: any) {
-      // Do not reveal whether user exists; provide clean message
-      const msg =
-        err?.status === 401 || err?.statusCode === 401
-          ? 'Unable to sign in. Please check your credentials.'
-          : err?.message?.includes('network') || err?.message?.includes('Failed to fetch')
-          ? 'Unable to connect to the server. Please try again.'
-          : 'Unable to sign in. Please check your credentials.';
-      setFormError(msg);
+      if (err?.code === 'EMAIL_NOT_CONFIRMED' || err?.message?.toLowerCase().includes('verify your email')) {
+        setUnverifiedEmail(err.email || (identifier.includes('@') ? identifier.trim() : null));
+        setFormError('Please verify your email address before signing in.');
+      } else if (err?.message?.includes('Invalid email/User ID or password')) {
+        setFormError('Invalid email/User ID or password.');
+      } else {
+        setFormError(err?.message || 'Unable to sign in. Please check your credentials.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleGoogleLogin = async () => {
-    if (isLoading || isGoogleLoading) return;
+  const handleResend = async () => {
+    if (!unverifiedEmail && !identifier.includes('@')) {
+      toastError('Please enter your email to resend verification.');
+      return;
+    }
 
-    setFormError('');
-    setIsGoogleLoading(true);
+    const emailToSend = unverifiedEmail || identifier.trim();
+    setIsResending(true);
+    setResendSuccess(false);
 
     try {
-      await signInWithGoogle();
+      await resendVerificationEmail(emailToSend);
+      setResendSuccess(true);
+      success('Verification email resent. Please check your inbox.');
     } catch (err: any) {
-      setFormError(
-        err?.message || 'Google sign-in could not be initiated. Please try again or use email/password.'
-      );
-      setIsGoogleLoading(false);
+      toastError(err?.message || 'Failed to resend verification email.');
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -109,10 +118,43 @@ export const LoginPage: React.FC = () => {
         {formError && (
           <div
             role="alert"
-            className="mb-6 p-3.5 rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/20 text-[#EF4444] text-xs font-medium flex items-center gap-2 animate-in fade-in duration-200"
+            className="mb-6 p-3.5 rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/20 text-[#EF4444] text-xs font-medium space-y-2 animate-in fade-in duration-200"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
-            <span>{formError}</span>
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] shrink-0" />
+              <span>{formError}</span>
+            </div>
+
+            {/* Unverified email resend action */}
+            {unverifiedEmail && (
+              <div className="pt-2 border-t border-[#EF4444]/20 flex items-center justify-between">
+                <span className="text-slate-300">Need a new link?</span>
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={isResending}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A78BFA] hover:text-[#C4B5FD] transition-colors underline disabled:opacity-50"
+                >
+                  {isResending ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Resend verification email</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {resendSuccess && (
+          <div className="mb-4 p-3 rounded-xl bg-[#22C55E]/10 border border-[#22C55E]/20 text-xs text-[#22C55E] flex items-center gap-2">
+            <span>Verification email sent! Check your inbox and spam folder.</span>
           </div>
         )}
 
@@ -127,12 +169,13 @@ export const LoginPage: React.FC = () => {
               setIdentifier(e.target.value);
               if (identifierError) setIdentifierError('');
               if (formError) setFormError('');
+              if (unverifiedEmail) setUnverifiedEmail(null);
             }}
             placeholder="alex.rivera@institution.edu or PRV-10482"
             leftIcon={<Mail className="w-4 h-4" />}
             error={identifierError}
             required
-            disabled={isLoading || isGoogleLoading}
+            disabled={isLoading}
             autoComplete="username"
           />
 
@@ -150,7 +193,7 @@ export const LoginPage: React.FC = () => {
               placeholder="••••••••"
               error={passwordError}
               required
-              disabled={isLoading || isGoogleLoading}
+              disabled={isLoading}
               autoComplete="current-password"
             />
             <div className="flex justify-end mt-1.5">
@@ -166,7 +209,7 @@ export const LoginPage: React.FC = () => {
           {/* Primary CTA Button */}
           <button
             type="submit"
-            disabled={isLoading || isGoogleLoading}
+            disabled={isLoading}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 mt-3 rounded-xl font-semibold text-sm text-white bg-[#7C3AED] hover:bg-[#6D28D9] active:bg-[#5B21B6] disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-md shadow-[#7C3AED]/20 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#111827] focus:ring-[#7C3AED] cursor-pointer"
           >
             {isLoading ? (
@@ -182,17 +225,6 @@ export const LoginPage: React.FC = () => {
             )}
           </button>
         </form>
-
-        {/* Divider */}
-        <AuthDivider text="OR" />
-
-        {/* Google Authentication Button */}
-        <GoogleSignInButton
-          onClick={handleGoogleLogin}
-          isLoading={isGoogleLoading}
-          disabled={isLoading}
-          text="Continue with Google"
-        />
 
         {/* Navigation to Register */}
         <div className="mt-8 pt-6 border-t border-[#243047] text-center text-xs text-[#94A3B8]">

@@ -7,7 +7,7 @@ const supabasePublishableKey =
 
 if (!supabaseUrl || !supabasePublishableKey) {
   console.warn(
-    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY) are not configured. Google OAuth may fail.'
+    '[Supabase] Warning: VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY) are not configured.'
   );
 }
 
@@ -25,32 +25,22 @@ export const supabase = createClient(
 );
 
 /**
- * Resolves the OAuth redirect URL:
- * - Localhost / local dev: returns current local origin + /auth/callback (e.g. http://localhost:5173/auth/callback)
- * - Production: returns https://provalix-ai.vercel.app/auth/callback (or VITE_AUTH_REDIRECT_URL / VITE_SITE_URL if configured)
+ * Resolves the email verification redirect URL:
+ * Automatically uses current origin (e.g. http://localhost:5173/auth/verify or https://provalix-ai.vercel.app/auth/verify)
  */
-export const getOAuthRedirectUrl = (): string => {
+export const getEmailVerifyRedirectUrl = (): string => {
   if (typeof window === 'undefined') {
-    return 'https://provalix-ai.vercel.app/auth/callback';
+    return 'https://provalix-ai.vercel.app/auth/verify';
   }
+  return `${window.location.origin}/auth/verify`;
+};
 
-  const hostname = window.location.hostname;
-  const isLocal =
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname.endsWith('.local') ||
-    hostname === '[::1]';
-
-  if (isLocal) {
-    return `${window.location.origin}/auth/callback`;
+/**
+ * Resolves the password reset redirect URL:
+ */
+export const getPasswordResetRedirectUrl = (): string => {
+  if (typeof window === 'undefined') {
+    return 'https://provalix-ai.vercel.app/reset-password';
   }
-
-  const siteUrl = import.meta.env.VITE_SITE_URL;
-  const siteCallback = siteUrl ? `${siteUrl.replace(/\/+$/, '')}/auth/callback` : null;
-
-  return (
-    import.meta.env.VITE_AUTH_REDIRECT_URL ||
-    siteCallback ||
-    'https://provalix-ai.vercel.app/auth/callback'
-  );
+  return `${window.location.origin}/reset-password`;
 };

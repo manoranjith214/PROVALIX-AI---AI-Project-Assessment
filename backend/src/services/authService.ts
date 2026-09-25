@@ -148,7 +148,7 @@ export class AuthService {
 
     const email = sbUser.email;
     if (!email) {
-      throw new AppError('Authenticated Google account did not return a verified email', 400);
+      throw new AppError('Supabase user did not return a verified email', 400);
     }
 
     const name =
@@ -239,14 +239,6 @@ export class AuthService {
       accessToken: provalixAccessToken,
       refreshToken: provalixRefreshToken,
     };
-  }
-
-  async googleLogin(data: { accessToken?: string; token?: string }) {
-    const token = data.accessToken || data.token;
-    if (!token) {
-      throw new AppError('OAuth access token is required', 400);
-    }
-    return this.supabaseLogin(token);
   }
 
   async forgotPassword(email: string) {

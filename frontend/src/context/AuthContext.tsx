@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { authService } from '../services/authService';
 import { tokenStorage } from '../services/api/tokenStorage';
 import { initializeStorage, Storage } from '../services/storage';
-import { supabase, getOAuthRedirectUrl } from '../lib/supabase';
+import { supabase, getEmailVerifyRedirectUrl } from '../lib/supabase';
 import { supabaseDataService } from '../services/supabaseDataService';
+import { authService } from '../services/authService';
 
 const EMPTY_USER: User = {
   id: '',
@@ -15,22 +15,29 @@ const EMPTY_USER: User = {
   year: '',
   college: '',
   role: 'Student',
+  authProvider: 'email',
 };
+
+interface RegisterExtra {
+  department?: string;
+  year?: string;
+  college?: string;
+  avatarUrl?: string;
+  permanentId?: string;
+}
 
 interface AuthContextValue {
   user: User;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password?: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
-  googleLogin: () => Promise<void>;
-  handleOAuthCallback: (accessToken: string, supabaseUser?: any) => Promise<User>;
+  login: (identifier: string, password: string) => Promise<User>;
   register: (
     name: string,
     email: string,
-    password?: string,
-    extra?: { department?: string; year?: string; college?: string }
-  ) => Promise<void>;
+    password: string,
+    extra?: RegisterExtra
+  ) => Promise<{ user: any; needsVerification: boolean }>;
+  resendVerificationEmail: (email: string) => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   uploadPhoto: (file: File) => Promise<User>;
   logout: () => Promise<void>;
@@ -60,13 +67,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const verifySession = async () => {
       try {
-        // Step 6: On page refresh, restore Supabase session first
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          // Database is the source of truth: fetch profile from public.profiles
           let profile = await supabaseDataService.fetchUserProfile(session.user.id);
           if (!profile) {
-            // First time sync into public.profiles
             profile = await supabaseDataService.syncUserProfile(session.user);
           }
           tokenStorage.setTokens(session.access_token, session.refresh_token);
@@ -78,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        // Secondary check: Provalix backend JWT if not using Supabase auth directly
+        // Check Provalix backend fallback if active
         const accessToken = tokenStorage.getAccessToken();
         if (accessToken) {
           try {
@@ -88,17 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsLoading(false);
             return;
           } catch {
-            const refreshToken = tokenStorage.getRefreshToken();
-            if (refreshToken) {
-              try {
-                await authService.refreshToken();
-                const profile = await authService.getCurrentUser();
-                setUser(profile);
-                setIsAuthenticated(true);
-                setIsLoading(false);
-                return;
-              } catch {}
-            }
+            tokenStorage.clearTokens();
           }
         }
 
@@ -107,13 +101,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(EMPTY_USER);
         setIsAuthenticated(false);
       } catch (err) {
-        console.warn('[AuthContext] verifySession notice:', err);
+        console.warn('[AuthContext] Session restoration error:', err);
       } finally {
         setIsLoading(false);
       }
     };
 
     verifySession();
+
+    // Supabase auth state change listener
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
+        let profile = await supabaseDataService.fetchUserProfile(session.user.id);
+        if (!profile) {
+          profile = await supabaseDataService.syncUserProfile(session.user);
+        }
+        tokenStorage.setTokens(session.access_token, session.refresh_token);
+        tokenStorage.setCachedUser(profile);
+        Storage.setCurrentUser(profile);
+        setUser(profile);
+        setIsAuthenticated(true);
+      } else if (event === 'SIGNED_OUT') {
+        Storage.clearAllUserData();
+        tokenStorage.clearTokens();
+        setUser(EMPTY_USER);
+        setIsAuthenticated(false);
+      }
+    });
 
     const handleExternalLogout = () => {
       Storage.clearAllUserData();
@@ -123,76 +137,133 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     window.addEventListener('provalix:auth:logout', handleExternalLogout);
-    return () => window.removeEventListener('provalix:auth:logout', handleExternalLogout);
+    return () => {
+      authListener?.subscription?.unsubscribe();
+      window.removeEventListener('provalix:auth:logout', handleExternalLogout);
+    };
   }, []);
 
-  const login = async (email: string, password?: string) => {
-    const pwd = password || 'Password@123';
-    const res = await authService.login(email, pwd);
-    setUser(res.user);
-    setIsAuthenticated(true);
-  };
+  /**
+   * Email or Permanent User ID Login
+   */
+  const login = async (identifier: string, password: string): Promise<User> => {
+    const cleanId = identifier.trim();
+    let emailToAuth = cleanId;
 
-  const signInWithGoogle = async () => {
-    const redirectTo = getOAuthRedirectUrl();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo,
-      },
-    });
-    if (error) {
-      throw error;
-    }
-  };
-
-  const googleLogin = signInWithGoogle;
-
-  const handleOAuthCallback = async (accessToken: string, supabaseUser?: any): Promise<User> => {
-    // 1. Get authenticated user from session or parameter
-    let sbUser = supabaseUser;
-    if (!sbUser) {
-      const { data: { session } } = await supabase.auth.getSession();
-      sbUser = session?.user;
-    }
-
-    let syncedProfile: User;
-
-    // 2. Database is the source of truth: Upsert user profile into public.profiles
-    if (sbUser?.id) {
-      syncedProfile = await supabaseDataService.syncUserProfile(sbUser);
-    } else {
-      syncedProfile = EMPTY_USER;
-    }
-
-    // 3. Keep backend synchronized if available
-    try {
-      const res = await authService.supabaseLogin(accessToken);
-      if (res?.user) {
-        syncedProfile = { ...syncedProfile, ...res.user };
+    // Check if user entered a Permanent User ID (e.g. PRV-10482)
+    const isPermanentId = /^PRV-\d+$/i.test(cleanId) || !cleanId.includes('@');
+    if (isPermanentId) {
+      const resolvedEmail = await supabaseDataService.getEmailByPermanentId(cleanId);
+      if (!resolvedEmail) {
+        throw new Error('Invalid email/User ID or password.');
       }
-    } catch (err: any) {
-      console.warn('[AuthContext] Backend /auth/supabase notice (using Supabase DB directly):', err?.message || err);
+      emailToAuth = resolvedEmail;
     }
 
-    tokenStorage.setTokens(accessToken);
-    tokenStorage.setCachedUser(syncedProfile);
-    Storage.setCurrentUser(syncedProfile);
-    setUser(syncedProfile);
+    // Authenticate with Supabase Auth
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: emailToAuth,
+      password,
+    });
+
+    if (error) {
+      const msg = error.message?.toLowerCase() || '';
+      if (msg.includes('email not confirmed') || msg.includes('not confirmed') || error.status === 400 && msg.includes('confirm')) {
+        const unverifiedError: any = new Error('Please verify your email address before signing in.');
+        unverifiedError.code = 'EMAIL_NOT_CONFIRMED';
+        unverifiedError.email = emailToAuth;
+        throw unverifiedError;
+      }
+      if (msg.includes('invalid login credentials') || msg.includes('invalid credentials')) {
+        throw new Error('Invalid email/User ID or password.');
+      }
+      throw new Error(error.message || 'Unable to sign in. Please check your credentials.');
+    }
+
+    if (!data.session?.user) {
+      throw new Error('No active session returned after sign in.');
+    }
+
+    let profile = await supabaseDataService.fetchUserProfile(data.session.user.id);
+    if (!profile) {
+      profile = await supabaseDataService.syncUserProfile(data.session.user);
+    }
+
+    tokenStorage.setTokens(data.session.access_token, data.session.refresh_token);
+    tokenStorage.setCachedUser(profile);
+    Storage.setCurrentUser(profile);
+    setUser(profile);
     setIsAuthenticated(true);
-    return syncedProfile;
+    return profile;
   };
 
+  /**
+   * New Email & Password Registration with email confirmation
+   */
   const register = async (
     name: string,
     email: string,
-    password?: string,
-    extra?: { department?: string; year?: string; college?: string }
-  ) => {
-    const pwd = password || 'Password@123';
-    const res = await authService.register(name, email, pwd, extra);
-    setUser(res.user);
-    setIsAuthenticated(true);
+    password: string,
+    extra?: RegisterExtra
+  ): Promise<{ user: any; needsVerification: boolean }> => {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. One Account Per Email check: database level verification
+    const emailExists = await supabaseDataService.checkEmailExists(cleanEmail);
+    if (emailExists) {
+      throw new Error('This email is already registered. Please sign in instead.');
+    }
+
+    // 2. Generate unique Permanent User ID
+    const permanentId = extra?.permanentId || (await supabaseDataService.generateUniquePermanentId());
+
+    // 3. Initiate Supabase Auth signup with user metadata
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+      options: {
+        emailRedirectTo: getEmailVerifyRedirectUrl(),
+        data: {
+          full_name: name.trim(),
+          permanent_id: permanentId,
+          department: extra?.department || 'Computer Science & Engineering',
+          year: extra?.year || '1st Year',
+          college: extra?.college || 'Apex Institute of Technology & Research',
+          avatar_url: extra?.avatarUrl || null,
+          role: 'Student',
+        },
+      },
+    });
+
+    if (error) {
+      const msg = error.message?.toLowerCase() || '';
+      if (msg.includes('already registered') || msg.includes('user already exists')) {
+        throw new Error('This email is already registered. Please sign in instead.');
+      }
+      throw new Error(error.message || 'Registration failed. Please check your details and try again.');
+    }
+
+    return {
+      user: data.user,
+      needsVerification: !data.session, // True when email confirmation is required
+    };
+  };
+
+  /**
+   * Resend Verification Email
+   */
+  const resendVerificationEmail = async (email: string): Promise<void> => {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email.trim().toLowerCase(),
+      options: {
+        emailRedirectTo: getEmailVerifyRedirectUrl(),
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message || 'Failed to resend verification email.');
+    }
   };
 
   const updateProfile = async (updates: Partial<User>) => {
@@ -202,11 +273,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(updated);
         tokenStorage.setCachedUser(updated);
         Storage.setCurrentUser(updated);
-        // Also notify backend if available
-        await authService.updateProfile(updates).catch(() => {});
         return;
       } catch (err) {
-        console.warn('[AuthContext] Supabase profile update error, trying backend:', err);
+        console.warn('[AuthContext] Supabase profile update notice:', err);
       }
     }
     const updated = await authService.updateProfile(updates);
@@ -227,8 +296,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await authService.logout().catch(() => {});
       await supabase.auth.signOut().catch(() => {});
+      await authService.logout().catch(() => {});
     } finally {
       Storage.clearAllUserData();
       tokenStorage.clearTokens();
@@ -245,10 +314,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         isLoading,
         login,
-        signInWithGoogle,
-        googleLogin,
-        handleOAuthCallback,
         register,
+        resendVerificationEmail,
         updateProfile,
         uploadPhoto,
         logout,

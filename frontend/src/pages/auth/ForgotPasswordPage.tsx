@@ -4,6 +4,7 @@ import { Mail, ArrowLeft, Send, CheckCircle2, Loader2 } from 'lucide-react';
 import { AuthLayout } from '../../components/auth/AuthLayout';
 import { AuthCard } from '../../components/auth/AuthCard';
 import { AuthInput } from '../../components/auth/AuthInput';
+import { supabase, getPasswordResetRedirectUrl } from '../../lib/supabase';
 import { authService } from '../../services/authService';
 import { useToast } from '../../context/ToastContext';
 
@@ -13,7 +14,6 @@ export const ForgotPasswordPage: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [resetToken, setResetToken] = useState<string | null>(null);
 
   const { success } = useToast();
 
@@ -40,12 +40,19 @@ export const ForgotPasswordPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const res = await authService.forgotPassword(email.trim());
-      setIsSuccess(true);
-      if (res.resetToken) {
-        setResetToken(res.resetToken);
+      const cleanEmail = email.trim().toLowerCase();
+      // Supabase Auth password reset request
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: getPasswordResetRedirectUrl(),
+      });
+
+      if (error) {
+        // Also attempt backend fallback if available
+        await authService.forgotPassword(cleanEmail).catch(() => {});
       }
-      success('Password reset instructions have been sent.');
+
+      setIsSuccess(true);
+      success('Password reset instructions have been dispatched.');
     } catch (err: any) {
       setFormError(
         err?.message?.includes('network') || err?.message?.includes('Failed to fetch')
@@ -117,19 +124,21 @@ export const ForgotPasswordPage: React.FC = () => {
             <div className="p-4 rounded-xl bg-[#22C55E]/10 border border-[#22C55E]/20 text-xs text-[#CBD5E1] space-y-2">
               <div className="flex items-center gap-2 text-[#22C55E] font-semibold text-sm">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>Password reset instructions have been sent.</span>
+                <span>Password reset instructions sent</span>
               </div>
               <p className="text-[#94A3B8] leading-relaxed">
                 If an account matches <strong className="text-[#F8FAFC]">{email}</strong>, a secure link to reset your credentials has been dispatched.
               </p>
             </div>
 
-            <Link
-              to={resetToken ? `/reset-password?token=${encodeURIComponent(resetToken)}` : '/reset-password'}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium text-xs text-[#CBD5E1] border border-[#334155] hover:bg-[#1E293B] hover:text-[#F8FAFC] transition-colors"
-            >
-              Proceed to Reset Password Page
-            </Link>
+            <div className="pt-2 text-center">
+              <Link
+                to="/login"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium text-xs text-[#CBD5E1] border border-[#334155] hover:bg-[#1E293B] hover:text-[#F8FAFC] transition-colors"
+              >
+                Back to Sign in
+              </Link>
+            </div>
           </div>
         )}
 

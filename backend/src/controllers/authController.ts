@@ -4,7 +4,6 @@ import {
   registerSchema,
   loginSchema,
   supabaseAuthSchema,
-  googleAuthSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   refreshTokenSchema,
@@ -38,16 +37,6 @@ export class AuthController {
       const { accessToken } = supabaseAuthSchema.parse(req.body);
       const result = await authService.supabaseLogin(accessToken);
       return sendSuccess(res, result, 'Supabase authentication successful', 200);
-    } catch (err) {
-      next(err);
-    }
-  }
-
-  async googleLogin(req: Request, res: Response, next: NextFunction) {
-    try {
-      const validated = googleAuthSchema.parse(req.body);
-      const result = await authService.googleLogin(validated);
-      return sendSuccess(res, result, 'Google login processed successfully', 200);
     } catch (err) {
       next(err);
     }

@@ -24,15 +24,6 @@ export const supabaseAuthSchema = z.object({
   accessToken: z.string().min(1, 'Supabase access token is required'),
 });
 
-export const googleAuthSchema = z
-  .object({
-    accessToken: z.string().optional(),
-    token: z.string().optional(),
-  })
-  .refine((data) => Boolean(data.accessToken || data.token), {
-    message: 'Authentication token is required',
-  });
-
 export const forgotPasswordSchema = z.object({
   email: z.string().email('Invalid email address'),
 });
