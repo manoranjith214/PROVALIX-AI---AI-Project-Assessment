@@ -469,7 +469,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       tokenStorage.clearTokens();
       setUser(EMPTY_USER);
       setIsAuthenticated(false);
-      window.dispatchEvent(new CustomEvent('provalix:auth:logout'));
     }
   };
 

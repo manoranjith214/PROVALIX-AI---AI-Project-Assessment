@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { chatbotService, ConversationSummary, ChatSource } from '../services/chatbotService';
+import { useAuth } from './AuthContext';
 
 export interface AIMessage {
   id: string;
@@ -176,8 +177,10 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
   }, [isOpen, loadHistory]);
 
+  const { isAuthenticated } = useAuth();
+
   useEffect(() => {
-    const handleLogout = () => {
+    if (!isAuthenticated) {
       setConversationId(null);
       setConversations([]);
       setMessages([INITIAL_WELCOME_MSG]);
@@ -185,11 +188,8 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setActiveSubmissionId(undefined);
       setError(null);
       setLastUserPrompt('');
-    };
-
-    window.addEventListener('provalix:auth:logout', handleLogout);
-    return () => window.removeEventListener('provalix:auth:logout', handleLogout);
-  }, []);
+    }
+  }, [isAuthenticated]);
 
   const startNewConversation = () => {
     setConversationId(null);
