@@ -103,28 +103,41 @@ export class TeamService {
   }
 
   async deleteTeam(teamId: string, userId: string) {
+    if (!teamId || typeof teamId !== 'string') {
+      throw new AppError('Invalid team identifier', 400);
+    }
+
     const team = await teamRepository.findById(teamId);
     if (!team) {
       throw new AppError('Team not found', 404);
     }
-    if (team.captainId !== userId) {
+
+    // Authorization: Only the team captain (or creator) can delete the team
+    const isCaptain =
+      team.captainId === userId ||
+      (team as any).createdById === userId ||
+      (team as any).captain?.id === userId;
+
+    if (!isCaptain) {
       throw new AppError('Only the team captain can delete the team', 403);
     }
 
+    // Constraint Check 1: Existing project submissions block permanent deletion
     const submissionCount = await teamRepository.countSubmissions(teamId);
     if (submissionCount > 0) {
       throw new AppError(
         'Cannot permanently delete team with existing submissions or classroom evaluations. Please archive or deactivate the team to preserve historical academic records.',
-        400
+        409
       );
     }
 
+    // Constraint Check 2: Approved classroom participation records block permanent deletion
     const participations = await teamRepository.listTeamClassroomParticipations(teamId);
     const hasApproved = participations.some((p: any) => p.status === 'Approved');
     if (hasApproved) {
       throw new AppError(
         'Cannot permanently delete team with approved classroom records. Please archive or deactivate the team to preserve historical participation.',
-        400
+        409
       );
     }
 
@@ -155,14 +168,14 @@ export class TeamService {
     }
 
     // Prevent duplicate members
-    const isAlreadyMember = team.members.some((m) => m.userId === targetUser.id);
+    const isAlreadyMember = team.members.some((m: any) => m.userId === targetUser.id);
     if (isAlreadyMember) {
       throw new AppError('User is already a member of this team', 400);
     }
 
     // Prevent duplicate pending invitations
     const pendingInvite = team.invitations.find(
-      (inv) => inv.userId === targetUser.id && inv.status === 'Pending'
+      (inv: any) => inv.userId === targetUser.id && inv.status === 'Pending'
     );
     if (pendingInvite) {
       throw new AppError('A pending invitation has already been dispatched to this user', 400);
@@ -292,7 +305,7 @@ export class TeamService {
       throw new AppError('Target new captain was not found', 404);
     }
 
-    const isMember = team.members.some((m) => m.userId === newCaptain.id);
+    const isMember = team.members.some((m: any) => m.userId === newCaptain.id);
     if (!isMember) {
       throw new AppError('New captain must already be an active member of this team', 400);
     }
@@ -366,7 +379,7 @@ export class TeamService {
     if (!team) {
       throw new AppError('Team not found', 404);
     }
-    const isMember = team.members.some((m) => m.userId === userId) || team.captainId === userId;
+    const isMember = team.members.some((m: any) => m.userId === userId) || team.captainId === userId;
     if (!isMember) {
       throw new AppError('You do not have permission to view this team', 403);
     }

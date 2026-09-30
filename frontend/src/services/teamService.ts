@@ -214,13 +214,33 @@ export const teamService = {
     }
   },
 
-  async deleteTeam(teamId: string): Promise<{ success: boolean; message: string }> {
+  async deleteTeam(teamId: string): Promise<{ success: boolean; message: string; status?: number }> {
     try {
       const res = await apiClient.delete<any>(`/teams/${teamId}`);
+      // Also delete from Supabase direct table if present
+      try {
+        await supabaseDataService.deleteTeam(teamId);
+      } catch {
+        // ignore if not present in direct table
+      }
       return { success: true, message: res?.message || 'Team deleted successfully' };
     } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || 'Failed to delete team';
-      return { success: false, message: msg };
+      const status = err?.status || err?.response?.status;
+      let msg = err?.message || 'Failed to delete team';
+
+      if (status === 404) {
+        msg = 'Team not found. The team may already have been deleted.';
+      } else if (status === 401) {
+        msg = 'Please sign in again.';
+      } else if (status === 403) {
+        msg = 'You are not authorized to delete this team.';
+      } else if (status === 409) {
+        msg = err?.message || 'Team cannot be deleted because it has submitted academic records.';
+      } else if (status >= 500) {
+        msg = 'Unable to delete team. Please try again.';
+      }
+
+      return { success: false, message: msg, status };
     }
   },
 

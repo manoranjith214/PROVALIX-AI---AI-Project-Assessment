@@ -299,8 +299,12 @@ export const TeamDetailPage: React.FC = () => {
     if (!team) return;
     setDeleting(true);
     try {
+      console.log("[TEAM DELETE] selected team:", team);
+      console.log("[TEAM DELETE] team id:", team?.id);
+      console.log("[TEAM DELETE] delete request:", `/teams/${team?.id}`);
       const res = await teamService.deleteTeam(team.id);
       if (res.success) {
+        setDeleteModalOpen(false);
         success('Team permanently deleted.');
         navigate('/teams');
       } else {
