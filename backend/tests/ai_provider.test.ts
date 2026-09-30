@@ -38,35 +38,32 @@ describe('AI Provider Switching & Gemini Fallback Tests', () => {
     expect(provider).toBeInstanceOf(MockAIProvider);
   });
 
-  test('GeminiProvider gracefully falls back to MockAIProvider responses when API call fails or client is offline', async () => {
-    // Instantiate with dummy key so client exists but network will fail
-    const gemini = new GeminiProvider('dummy-key-for-test');
+  test('GeminiProvider refuses to return fake fallback answers when AI_PROVIDER is gemini', async () => {
+    config.ai.provider = 'gemini';
+    const gemini = new GeminiProvider('invalid-key-for-test');
     
-    // When generating response offline, it safely catches and invokes fallback without crashing
-    const res = await gemini.generateResponse('What is normalization?');
-    expect(res).toContain('Database Normalization');
-    expect(res).toContain('1NF');
+    // In production with gemini configured, API failure must throw rather than silently returning mock answers
+    await expect(gemini.generateResponse('What is normalization?')).rejects.toThrow();
   });
 
-  test('GeminiProvider gracefully falls back for Tanglish queries when offline', async () => {
-    const gemini = new GeminiProvider('dummy-key-for-test');
-    const res = await gemini.generateResponse('Tanglish la DBMS explain pannu');
+  test('MockAIProvider provides test responses for English queries in test mode', async () => {
+    const mock = new MockAIProvider();
+    const res = await mock.generateResponse('Explain DBMS in English', undefined, undefined, 'english');
+    expect(res).toContain('DBMS');
+    expect(res).toContain('Database Management System');
+  });
+
+  test('MockAIProvider provides test responses for Tanglish queries in test mode', async () => {
+    const mock = new MockAIProvider();
+    const res = await mock.generateResponse('Tanglish la DBMS explain pannu', undefined, undefined, 'tanglish');
     expect(res).toContain('DBMS');
     expect(res).toContain('structured databases');
   });
 
-  test('GeminiProvider gracefully falls back for Tamil queries when offline', async () => {
-    const gemini = new GeminiProvider('dummy-key-for-test');
-    const res = await gemini.generateResponse('தமிழ்ல DBMS explain பண்ணு');
+  test('MockAIProvider provides test responses for Tamil queries in test mode', async () => {
+    const mock = new MockAIProvider();
+    const res = await mock.generateResponse('தமிழ்ல DBMS explain பண்ணு', undefined, undefined, 'tamil');
     expect(res).toContain('தரவுத்தள மேலாண்மை அமைப்பு');
     expect(res).toContain('DBMS');
-    expect(res).toContain('ACID');
-  });
-
-  test('GeminiProvider gracefully falls back for English queries when offline', async () => {
-    const gemini = new GeminiProvider('dummy-key-for-test');
-    const res = await gemini.generateResponse('Explain DBMS in English');
-    expect(res).toContain('DBMS (Database Management System)');
-    expect(res).toContain('system software');
   });
 });
