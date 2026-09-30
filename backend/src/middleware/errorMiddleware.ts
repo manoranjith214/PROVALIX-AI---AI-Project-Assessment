@@ -30,8 +30,11 @@ export function errorHandler(
   }
 
   // Handle Custom AppError
-  if (err instanceof AppError) {
-    return sendError(res, err.message, err.statusCode, err.errors);
+  if (err instanceof AppError || err.statusCode) {
+    const extra: Record<string, any> = {};
+    if (err.status) extra.status = err.status;
+    if (err.missingResources) extra.missingResources = err.missingResources;
+    return sendError(res, err.message, err.statusCode || 500, err.errors || [], extra);
   }
 
   // Handle Prisma Unique Constraint Violation

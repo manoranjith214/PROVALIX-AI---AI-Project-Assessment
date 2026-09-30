@@ -1,4 +1,5 @@
 import { tokenStorage } from './tokenStorage';
+import { supabase } from '../../lib/supabase';
 
 export interface ApiResponse<T = any> {
   success: boolean;
@@ -44,9 +45,32 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     ...(options.headers as Record<string, string>),
   };
 
-  const token = tokenStorage.getAccessToken();
-  if (token && !headers['Authorization']) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (!headers['Authorization']) {
+    try {
+      let { data: { session } } = await supabase.auth.getSession();
+      if (session && session.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+        try {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          if (refreshed?.session) {
+            session = refreshed.session;
+          }
+        } catch {
+          // ignore refresh error
+        }
+      }
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+        tokenStorage.setAccessToken(session.access_token);
+      }
+    } catch {
+      // ignore
+    }
+    if (!headers['Authorization']) {
+      const token = tokenStorage.getAccessToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
   }
 
   const config: RequestInit = {
@@ -64,9 +88,18 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     );
   }
 
-  // Handle 401 Unauthorized: throw ApiError without clearing Supabase session or forcing global logout
+  // Handle 401 Unauthorized: parse error message without clearing Supabase session or forcing global logout
   if (response.status === 401) {
-    throw new ApiError('Authentication required or endpoint unauthorized.', 401);
+    let errorMsg = 'Authentication required. Please sign in again.';
+    try {
+      const errorJson = await response.json();
+      if (errorJson?.message) {
+        errorMsg = errorJson.message;
+      }
+    } catch {
+      // ignore JSON parse error
+    }
+    throw new ApiError(errorMsg, 401);
   }
 
   // Parse JSON response

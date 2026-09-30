@@ -1,7 +1,9 @@
 import { projectCheckerRepository } from '../repositories/projectCheckerRepository';
-import { defaultAIProvider } from '../integrations/ai/MockAIProvider';
+import { getAIProvider } from '../integrations/ai';
 import { defaultPlagiarismProvider } from '../integrations/plagiarism/MockPlagiarismProvider';
 import { defaultStorageProvider } from '../integrations/storage/LocalStorageProvider';
+import { evidenceAnalyzer } from '../integrations/rubric/evidenceAnalyzer';
+import { rubricEngine } from '../integrations/rubric/rubricEngine';
 import { PaginationParams } from '../types';
 import { AppError } from '../middleware/errorMiddleware';
 
@@ -79,14 +81,61 @@ export class ProjectCheckerService {
   async runAIEvaluation(projectId: string, userId: string) {
     const project = await this.getProjectById(projectId, userId);
 
-    // Get or run plagiarism check first
+    // 1. STRICT VALIDATION LAYER (Requirement 1)
+    // Validate project information and evidence presence before ANY AI analysis
+    const validationCheck = evidenceAnalyzer.validateProjectSubmission(project);
+    if (!validationCheck.isValid) {
+      throw new AppError(
+        validationCheck.reason || 'Insufficient project evidence for evaluation.',
+        400
+      );
+    }
+
+    // 2. EVIDENCE ANALYSIS (Requirement 2 & 5)
+    // Extract user claims, verified evidence, missing evidence, and contradictions
+    const evidenceAnalysis = evidenceAnalyzer.extractAndClassifyEvidence(project);
+
+    // 3. Get or run plagiarism check first
     let plagiarism = project.plagiarism;
     if (!plagiarism) {
       plagiarism = await this.runPlagiarismCheck(projectId, userId);
     }
 
-    // Run AI Evaluation out of 100 with exact 7 criteria breakdown
-    const aiResult = await defaultAIProvider.evaluateProject(project, plagiarism);
+    // 4. Run AI Evaluation with structured evidence input
+    const aiProvider = getAIProvider();
+    const aiResult = await aiProvider.evaluateProject(project, plagiarism, evidenceAnalysis);
+
+    // 5. VALIDATE AI RESULTS BEFORE PERSISTING (Requirement 18)
+    const requiredCriteria = [
+      'problemDefinition',
+      'innovationNovelty',
+      'technicalImplementation',
+      'functionality',
+      'codeQuality',
+      'documentation',
+      'overallQuality',
+    ] as const;
+
+    if (!aiResult || !aiResult.criteria) {
+      throw new AppError('AI evaluation returned an invalid response. Please try again.', 502);
+    }
+
+    for (const key of requiredCriteria) {
+      const c = aiResult.criteria[key];
+      if (!c || typeof c.obtainedScore !== 'number' || isNaN(c.obtainedScore)) {
+        throw new AppError(`AI evaluation returned invalid score for criterion: ${key}`, 502);
+      }
+      if (c.obtainedScore < 0 || c.obtainedScore > c.maxScore) {
+        throw new AppError(`AI evaluation score out of range for criterion: ${key}`, 502);
+      }
+    }
+
+    // Strictly calculate overall score from individual criteria
+    const criteriaScoresList = Object.values(aiResult.criteria).map((c) => ({
+      score: c.obtainedScore,
+      maxScore: c.maxScore,
+    }));
+    const verifiedTotalScore = rubricEngine.calculateVerifiedScore(criteriaScoresList, 100);
 
     return projectCheckerRepository.upsertAIEvaluation({
       projectId,
@@ -104,7 +153,7 @@ export class ProjectCheckerService {
       documentationFeedback: aiResult.criteria.documentation.feedback,
       overallQualityScore: aiResult.criteria.overallQuality.obtainedScore,
       overallQualityFeedback: aiResult.criteria.overallQuality.feedback,
-      totalScore: aiResult.overallScore,
+      totalScore: verifiedTotalScore,
       strengths: aiResult.strengths,
       weaknesses: aiResult.weaknesses,
       technicalAnalysis: aiResult.technicalAnalysis,

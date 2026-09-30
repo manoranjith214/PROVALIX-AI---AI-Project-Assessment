@@ -60,6 +60,36 @@ export class ChatbotRepository {
       return chatMsg;
     }, { maxWait: 15000, timeout: 30000 });
   }
+
+  async findRecentPendingUserConversation(userId: string, userMessage: string) {
+    try {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+      const conversations = await prisma.chatConversation.findMany({
+        where: {
+          userId,
+          updatedAt: { gte: twoMinutesAgo },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 3,
+        include: {
+          messages: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+
+      for (const conv of conversations) {
+        const msgs = conv.messages || [];
+        if (msgs.length > 0) {
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg.role === 'user' && lastMsg.message === userMessage) {
+            return conv;
+          }
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export const chatbotRepository = new ChatbotRepository();

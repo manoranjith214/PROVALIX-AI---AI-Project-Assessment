@@ -1,4 +1,4 @@
-import { QueryCategory, SupportedLanguage } from './chatbotTypes';
+import { QueryCategory, SupportedLanguage, PrimaryIntent } from './chatbotTypes';
 
 export type UserContextType =
   | 'evaluation'
@@ -12,10 +12,12 @@ export type UserContextType =
   | 'project_report';
 
 export interface ClassificationResult {
+  detectedIntent: PrimaryIntent;
   categories: QueryCategory[];
   primaryCategory: QueryCategory;
   detectedLanguage: SupportedLanguage;
   isCasualGreeting: boolean;
+  isFollowUp: boolean;
   requiresProjectContext: boolean;
   requiresProvalixKB: boolean;
   requiresGeneralKnowledge?: boolean;
@@ -88,7 +90,6 @@ export class QueryClassifier {
       return 'bengali';
     }
     if (/[\u0900-\u097F]/.test(raw)) {
-      // Check for Marathi-specific patterns, else Hindi
       if (/\b(आहे|नाही|कसा|कसे|झाले)\b/.test(raw)) {
         return 'marathi';
       }
@@ -137,17 +138,25 @@ export class QueryClassifier {
   }
 
   /**
-   * Classifies the query into one or more categories and evaluates context requirements.
+   * Classifies user question into primary intent (PROVALIX, PROJECT, PROGRAMMING, ACADEMIC, GENERAL, FOLLOW_UP)
+   * and maps relevant categories.
    */
-  classify(text: string, activeProjectId?: string, activeSubmissionId?: string): ClassificationResult {
+  classify(
+    text: string,
+    activeProjectId?: string,
+    activeSubmissionId?: string,
+    history?: Array<{ role: string; message: string }>
+  ): ClassificationResult {
     const raw = text.trim();
     const lower = raw.toLowerCase();
     const language = this.detectLanguage(raw);
 
     const categories: QueryCategory[] = [];
     let userContextType: UserContextType | undefined;
+    let detectedIntent: PrimaryIntent = 'GENERAL';
+    let isFollowUp = false;
 
-    // 1. Casual Greetings & Conversation
+    // 1. Casual Greetings & Social Exchanges
     const casualPatterns = [
       /^(hi|hello|hey|yo|hola|namaste|vanakkam|good morning|good afternoon|good evening|howdy|sup)\b/i,
       /^(how are you|how r u|what's up|whats up|how are things)\b/i,
@@ -158,216 +167,192 @@ export class QueryClassifier {
     if (isCasualGreeting) {
       categories.push('CASUAL_CONVERSATION');
       return {
+        detectedIntent: 'GENERAL',
         categories,
         primaryCategory: 'CASUAL_CONVERSATION',
         detectedLanguage: language,
         isCasualGreeting: true,
+        isFollowUp: false,
         requiresProjectContext: false,
         requiresProvalixKB: false,
         requiresGeneralKnowledge: false,
       };
     }
 
-    // 2. Deadlines & Schedule
-    const deadlineKeywords = [
-      'deadline', 'deadlines', 'when is my deadline', 'what is the deadline',
-      'upcoming deadline', 'what should i submit next', 'what is due', 'due this week',
-      'last date', 'submission date', 'kadisi thethi', 'eppo submit pannanum'
-    ];
-    if (deadlineKeywords.some((k) => lower.includes(k))) {
-      categories.push('DEADLINE');
-      userContextType = 'deadline';
+    // 2. Check for FOLLOW_UP query
+    // A query is a follow-up when it refers to an immediate preceding topic without introducing a standalone subject.
+    const hasHistory = Array.isArray(history) && history.length > 0;
+    const isExplicitFollowUpPhrase =
+      /\b(its|it|their)\s+(advantages|disadvantages|benefits|features|pros|cons|limitation|limitations|syntax|use cases?|working|architecture|applications)\b/i.test(lower) ||
+      /\b(what are its|what is its|what's its|why is it|how does it work|how is it used)\b/i.test(lower) ||
+      /\b(give\s+(me\s+)?(an?\s+)?example|give\s+(me\s+)?(an?\s+)?udharanam|can you give an example|give example)\b/i.test(lower) ||
+      /\b(sql\s+(la\s+)?(explain|sollu|kudu)|python\s+(la\s+)?(explain|sollu|kudu)|tamil\s+la\s+sollu)\b/i.test(lower) ||
+      /\b(tell me more|explain more|elaborate|further details|what else|and what about|how to fix (this|it)|how to implement (this|it))\b/i.test(lower);
+
+    // If query has its own explicit standalone topic (e.g., "What is normalization in DBMS?", "What is TCP?", "Explain Python decorators", "What is my project score?"),
+    // it is NOT a follow-up, even if there is prior history!
+    const hasStandaloneSubject =
+      /\b(what is react|what is normalization|what is dbms|what is tcp|explain python decorators|python decorators|what is my project score|explain my score|why did i lose marks)\b/i.test(lower) ||
+      (/\b(react|dbms|normalization|tcp|udp|osi|python decorator|cloud computing)\b/i.test(lower) && wordsCount(lower) >= 3);
+
+    if (hasHistory && isExplicitFollowUpPhrase && !hasStandaloneSubject) {
+      isFollowUp = true;
+      detectedIntent = 'FOLLOW_UP';
     }
 
-    // 3. Team Management
-    const teamKeywords = [
-      'my team', 'team captain', 'who is my captain', 'who is my team captain',
-      'team members', 'who are my team members', 'my teammates', 'team code',
-      'what is my team', 'what classrooms is my team', 'submissions are pending for my team',
-      'team invitation', 'en team', 'enga team'
+    // 3. User Personal Project Queries (PROJECT)
+    const personalProjectPatterns = [
+      /\b(my project|our project|en project|enga project|project-ku|project la)\b/i,
+      /\b(my submission|en submission|my report|project report status|summarize my (latest\s+)?report)\b/i,
+      /\b(my score|my marks?|en score|en marks?|my evaluation|current evaluation status|what is my project score|what is my ai score)\b/i,
+      /\b(why did i (get|lose)|lose marks?|lost marks?|where did i lose|deducted marks?|why plagiarism)\b/i,
+      /\b(why did i lose marks in code quality|code quality marks?|lose marks in code quality)\b/i,
+      /\b(what feedback did i get|what should i improve|weakness|improvement plan|improve my project)\b/i,
+      /\b(why is my evaluation incomplete|is my result published)\b/i,
+      /\b(viva status|start viva practice|give me viva questions|viva questions for my project|viva practice)\b/i,
+      /\b(deadlines?|when is my deadline|upcoming deadline|what should i submit next|due this week|submission date|when to submit)\b/i,
+      /\b(my team|team captain|who is my captain|who is my team captain|team members|who are my team members|my teammates)\b/i,
+      /\b(which classroom am i enrolled in|my classroom|enrolled classroom|classrooms am i in)\b/i,
+      /\b(what's my rank|what is my rank|my rank|my ranking|where do i stand|class rank|leaderboard)\b/i,
+      /\b(pending notifications|do i have any pending notifications|unread notifications|why did i receive this notification)\b/i,
+      /\b(plagiarism status|plagiarism similarity|plagiarism report|similarity percentage|plagiarism deduction)\b/i,
     ];
-    if (teamKeywords.some((k) => lower.includes(k))) {
-      categories.push('TEAM');
-      userContextType = userContextType || 'team';
-    }
 
-    // 4. Classroom Enrollment & Status
-    const classroomKeywords = [
-      'which classroom am i enrolled in', 'my classroom', 'enrolled classroom',
-      'classroom status', 'classrooms am i in', 'my classes', 'classroom code',
-      'which classroom'
-    ];
-    if (classroomKeywords.some((k) => lower.includes(k))) {
-      categories.push('CLASSROOM');
-      userContextType = userContextType || 'classroom';
-    }
+    const isProjectQuery = personalProjectPatterns.some((pattern) => pattern.test(lower));
 
-    // 5. Ranking & Leaderboard
-    const rankingKeywords = [
-      'what\'s my rank', 'what is my rank', 'my rank', 'my ranking',
-      'leaderboard', 'where do i stand', 'class rank', 'rank list'
-    ];
-    if (rankingKeywords.some((k) => lower.includes(k))) {
-      categories.push('RANKING');
-      userContextType = userContextType || 'ranking';
-    }
+    if (isProjectQuery && !isFollowUp) {
+      detectedIntent = 'PROJECT';
+      categories.push('PROJECT');
 
-    // 6. Notifications
-    const notificationKeywords = [
-      'notification', 'notifications', 'pending notifications', 'do i have any pending notifications',
-      'unread notifications', 'why did i receive this notification', 'alerts', 'my alerts'
-    ];
-    if (notificationKeywords.some((k) => lower.includes(k))) {
-      categories.push('NOTIFICATION');
-      userContextType = userContextType || 'notification';
-    }
-
-    // 7. Viva Voce & Defense
-    const vivaKeywords = [
-      'viva status', 'start viva practice', 'viva practice', 'give me viva questions',
-      'viva questions for my project', 'viva questions', 'viva defense', 'viva preparation',
-      'oral defense', 'viva test', 'practice viva'
-    ];
-    if (vivaKeywords.some((k) => lower.includes(k))) {
-      categories.push('VIVA');
-      userContextType = userContextType || 'viva';
-    }
-
-    // 8. Plagiarism
-    const plagiarismKeywords = [
-      'plagiarism status', 'plagiarism similarity', 'plagiarism report',
-      'similarity percentage', 'plagiarism deduction', 'why plagiarism',
-      'code similarity', 'report similarity'
-    ];
-    if (plagiarismKeywords.some((k) => lower.includes(k))) {
-      categories.push('PLAGIARISM');
-      userContextType = userContextType || 'plagiarism';
-    }
-
-    // 9. Project Reports
-    const reportKeywords = [
-      'show my project report status', 'project report status', 'my report status',
-      'summarize my latest report', 'summarize my report', 'download report',
-      'evaluation report', 'my report'
-    ];
-    if (reportKeywords.some((k) => lower.includes(k))) {
-      categories.push('PROJECT_REPORT');
-      userContextType = userContextType || 'project_report';
-    }
-
-    // 10. Evaluation & Scores
-    const evalKeywords = [
-      'current evaluation status', 'explain my current evaluation status', 'my evaluation',
-      'what is my project score', 'what is my ai score', 'what is pending in my evaluation',
-      'what feedback did i get', 'what should i improve', 'why did i get', 'explain my score',
-      'why is my evaluation incomplete', 'is my result published', 'evaluation incomplete',
-      'my score', 'my mark', 'my marks', 'en score', 'weakness', 'improvement plan'
-    ];
-    if (evalKeywords.some((k) => lower.includes(k))) {
-      categories.push('EVALUATION');
-      userContextType = userContextType || 'evaluation';
-    }
-
-    // 11. Personal Project Queries
-    const projectKeywords = [
-      'my project', 'en project', 'enga project', 'our project', 'project-ku', 'project la',
-      'my submission', 'improve my project', 'my project details'
-    ];
-    if (projectKeywords.some((pk) => lower.includes(pk)) || ((activeProjectId || activeSubmissionId) && (lower.includes('project') || lower.includes('score') || lower.includes('improve')))) {
-      if (!categories.includes('PROJECT')) {
-        categories.push('PROJECT');
+      if (lower.includes('deadline') || lower.includes('last date') || lower.includes('submit next')) {
+        categories.push('DEADLINE');
+        userContextType = 'deadline';
+      } else if (lower.includes('team') || lower.includes('captain') || lower.includes('teammate')) {
+        categories.push('TEAM');
+        userContextType = 'team';
+      } else if (lower.includes('classroom')) {
+        categories.push('CLASSROOM');
+        userContextType = 'classroom';
+      } else if (lower.includes('rank') || lower.includes('standing') || lower.includes('leaderboard')) {
+        categories.push('RANKING');
+        userContextType = 'ranking';
+      } else if (lower.includes('notification') || lower.includes('alert')) {
+        categories.push('NOTIFICATION');
+        userContextType = 'notification';
+      } else if (lower.includes('viva') || lower.includes('defense') || lower.includes('oral')) {
+        categories.push('VIVA');
+        userContextType = 'viva';
+      } else if (lower.includes('plagiarism') || lower.includes('similarity')) {
+        categories.push('PLAGIARISM');
+        userContextType = 'plagiarism';
+      } else if (lower.includes('report')) {
+        categories.push('PROJECT_REPORT');
+        userContextType = 'project_report';
+      } else {
+        categories.push('EVALUATION');
+        userContextType = 'evaluation';
       }
-      userContextType = userContextType || 'evaluation';
     }
 
-    // 12. Provalix Platform & Rubric Queries
+    // 4. Provalix Platform & Rubric Queries (PROVALIX)
     const provalixKeywords = [
-      'provalix', 'project checker', 'classroom evaluation', 'viva voce', 'faculty evaluation', 'ai evaluation',
-      'rubric', 'evaluator', 'prv-', 'verification status', 'how does provalix evaluate',
+      'provalix', 'project checker', 'classroom evaluation', 'viva voce guidelines', 'viva defense guidelines',
+      'viva defense', 'viva guidelines', 'viva', 'oral defense',
+      'rubric', 'prv-', 'verification status', 'how does provalix evaluate',
       'criteria breakdown', 'marks distribution', 'marks epdi divide', 'evaluation guidelines',
-      'viva defense guidelines', 'viva guidelines', 'score calculated', 'evaluation system', 'evaluation rules'
+      'score calculated', 'evaluation system', 'evaluation rules'
     ];
-    if (provalixKeywords.some((k) => lower.includes(k))) {
+    const isProvalixPlatform =
+      !isProjectQuery &&
+      provalixKeywords.some((k) => lower.includes(k)) &&
+      !lower.includes('my project') &&
+      !lower.includes('my score');
+
+    if (isProvalixPlatform && !isFollowUp) {
+      detectedIntent = 'PROVALIX';
       categories.push('PROVALIX_PLATFORM');
     }
 
-    // 13. Programming & Code Questions
+    // 5. Programming & Code Questions (PROGRAMMING)
     const programmingKeywords = [
-      'python', 'java', 'c++', 'javascript', 'typescript', 'recursion', 'loop', 'loops',
-      'array', 'arrays', 'pointer', 'pointers', 'palindrome', 'function', 'class',
-      'object', 'inheritance', 'polymorphism', 'syntax', 'compile', 'debugging', 'code',
-      'program', 'program kudu', 'code kudu', 'algorithm', 'binary search', 'bubble sort'
+      'react', 'react.js', 'vue', 'angular', 'next.js', 'node', 'nodejs', 'express',
+      'python', 'java', 'c++', 'javascript', 'typescript', 'golang', 'rust',
+      'decorator', 'decorators', 'closure', 'closures', 'promise', 'async', 'await',
+      'recursion', 'recursive', 'loop', 'loops', 'array', 'arrays', 'pointer', 'pointers',
+      'palindrome', 'function', 'class', 'object', 'inheritance', 'polymorphism',
+      'syntax', 'compile', 'debugging', 'code', 'program', 'program kudu', 'code kudu',
+      'algorithm', 'binary search', 'bubble sort', 'quicksort', 'merge sort',
+      'git', 'github', 'frontend', 'backend', 'rest api', 'rest', 'api', 'apis',
+      'microservice', 'microservices', 'docker', 'kubernetes', 'cloud'
     ];
-    if (programmingKeywords.some((k) => lower.includes(k))) {
+    const isProgramming =
+      !isProjectQuery &&
+      !isProvalixPlatform &&
+      programmingKeywords.some((k) => lower.includes(k));
+
+    if (isProgramming && !isFollowUp) {
+      detectedIntent = 'PROGRAMMING';
       categories.push('PROGRAMMING');
-    }
-
-    // 14. Database / SQL Questions
-    const dbKeywords = [
-      'dbms', 'sql', 'database', 'normalization', 'normal form', '1nf', '2nf', '3nf',
-      'bcnf', 'acid', 'transaction', 'primary key', 'foreign key', 'join', 'joins',
-      'indexing', 'query', 'mongodb', 'postgresql', 'mysql', 'relational'
-    ];
-    if (dbKeywords.some((k) => lower.includes(k))) {
-      categories.push('DATABASE');
-    }
-
-    // 15. AI / ML Questions
-    const aimlKeywords = [
-      'ai', 'artificial intelligence', 'machine learning', 'deep learning', 'neural network',
-      'overfitting', 'underfitting', 'transformer', 'llm', 'rag', 'dataset', 'nlp',
-      'computer vision', 'gradient descent', 'supervised', 'unsupervised', 'cnn', 'rnn'
-    ];
-    if (aimlKeywords.some((k) => lower.includes(k))) {
-      categories.push('AI_ML');
-    }
-
-    // 16. Academic / Theoretical Questions
-    const academicKeywords = [
-      'syllabus', 'semester', 'exam', 'theory', 'definition', 'derivation', 'theorem',
-      'operating system', 'os', 'deadlock', 'paging', 'computer networks', 'tcp', 'ip',
-      'osi model', 'cryptography'
-    ];
-    if (academicKeywords.some((k) => lower.includes(k))) {
-      categories.push('ACADEMIC');
-    }
-
-    // 17. Career & Learning Questions
-    const careerKeywords = [
-      'career', 'resume', 'cv', 'interview', 'job', 'internship', 'roadmap',
-      'how to become', 'salary', 'placement', 'preparation'
-    ];
-    if (careerKeywords.some((k) => lower.includes(k))) {
-      categories.push('CAREER');
-    }
-
-    // 18. Technical Concepts
-    const technicalKeywords = [
-      'api', 'rest', 'graphql', 'microservice', 'docker', 'kubernetes', 'git', 'github',
-      'cloud', 'aws', 'azure', 'devops', 'ci/cd', 'frontend', 'backend', 'full stack'
-    ];
-    if (technicalKeywords.some((k) => lower.includes(k))) {
       categories.push('TECHNICAL');
     }
 
-    // Fallback if none matched
-    if (categories.length === 0) {
-      categories.push('GENERAL');
+    // 6. Academic & Theoretical Questions (ACADEMIC)
+    const academicKeywords = [
+      'dbms', 'sql', 'database', 'normalization', 'normal form', '1nf', '2nf', '3nf', 'bcnf',
+      'acid', 'transaction', 'primary key', 'foreign key', 'join', 'joins', 'indexing',
+      'relational', 'rdbms', 'tcp', 'udp', 'ip', 'tcp/ip', 'osi model', 'osi 7 layers',
+      'computer networks', 'socket', 'handshake', 'routing', 'dns', 'http', 'https',
+      'operating system', 'os', 'deadlock', 'paging', 'segmentation', 'virtual memory',
+      'process scheduling', 'semaphore', 'mutex', 'cryptography', 'rsa', 'theory',
+      'derivation', 'theorem', 'syllabus', 'semester', 'exam', 'machine learning',
+      'overfitting', 'underfitting', 'neural network', 'deep learning', 'cnn', 'rnn'
+    ];
+    const isAcademic =
+      !isProjectQuery &&
+      !isProvalixPlatform &&
+      !isProgramming &&
+      academicKeywords.some((k) => lower.includes(k));
+
+    if (isAcademic && !isFollowUp) {
+      detectedIntent = 'ACADEMIC';
+      if (lower.includes('dbms') || lower.includes('database') || lower.includes('normalization') || lower.includes('sql') || lower.includes('acid') || lower.includes('join')) {
+        categories.push('DATABASE');
+      } else if (/\b(ai|ml)\b/i.test(lower) || lower.includes('machine learning') || lower.includes('overfitting') || lower.includes('neural')) {
+        categories.push('AI_ML');
+      } else {
+        categories.push('ACADEMIC');
+        categories.push('TECHNICAL');
+      }
     }
 
-    const primaryCategory = categories[0];
-    const requiresProjectContext = Boolean(userContextType) || categories.includes('PROJECT') || categories.includes('EVALUATION');
-    const requiresProvalixKB = categories.includes('PROVALIX_PLATFORM') ||
-      (categories.includes('PROJECT') && !hasSpecificPersonalKeywords(lower));
-    const requiresGeneralKnowledge = categories.some((c) =>
-      ['TECHNICAL', 'PROGRAMMING', 'DATABASE', 'AI_ML', 'ACADEMIC', 'CAREER', 'GENERAL'].includes(c)
-    );
+    // 7. Fallback to GENERAL if still unassigned
+    if (detectedIntent === 'GENERAL' && !isCasualGreeting && !isFollowUp) {
+      if (lower.includes('career') || lower.includes('resume') || lower.includes('interview') || lower.includes('job')) {
+        categories.push('CAREER');
+      } else if (lower.includes('api') || lower.includes('cloud') || lower.includes('docker') || lower.includes('microservice')) {
+        categories.push('TECHNICAL');
+        detectedIntent = 'PROGRAMMING';
+      } else {
+        categories.push('GENERAL');
+      }
+    }
+
+    // Determine context needs
+    // CRITICAL RULE: Project context is ONLY required if detectedIntent is PROJECT or FOLLOW_UP to a project question!
+    // For "What is React?", "What is TCP?", "What is normalization in DBMS?", requiresProjectContext is strictly FALSE!
+    const requiresProjectContext = detectedIntent === 'PROJECT' || Boolean(userContextType);
+    const requiresProvalixKB = detectedIntent === 'PROVALIX' || categories.includes('PROVALIX_PLATFORM');
+    const requiresGeneralKnowledge = ['PROGRAMMING', 'ACADEMIC', 'GENERAL'].includes(detectedIntent);
+
+    const primaryCategory = categories[0] || 'GENERAL';
 
     return {
+      detectedIntent,
       categories,
       primaryCategory,
       detectedLanguage: language,
-      isCasualGreeting: false,
+      isCasualGreeting,
+      isFollowUp,
       requiresProjectContext,
       requiresProvalixKB,
       requiresGeneralKnowledge,
@@ -378,10 +363,6 @@ export class QueryClassifier {
 
 function wordsCount(str: string): number {
   return str.split(/\s+/).filter(Boolean).length;
-}
-
-function hasSpecificPersonalKeywords(lower: string): boolean {
-  return lower.includes('my score') || lower.includes('my mark') || lower.includes('why did i get') || lower.includes('my evaluation');
 }
 
 export const queryClassifier = new QueryClassifier();

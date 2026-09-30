@@ -44,7 +44,21 @@ export interface SendMessageDto {
   conversationId?: string;
   projectId?: string;
   submissionId?: string;
+  context?: {
+    projectId?: string;
+    classroomId?: string;
+    submissionId?: string;
+  };
+  isRetry?: boolean;
 }
+
+export type PrimaryIntent =
+  | 'PROVALIX'
+  | 'PROJECT'
+  | 'PROGRAMMING'
+  | 'ACADEMIC'
+  | 'GENERAL'
+  | 'FOLLOW_UP';
 
 export interface ChatResponseData {
   conversationId: string;
@@ -55,6 +69,7 @@ export interface ChatResponseData {
     hasKnowledgeBaseContext: boolean;
     projectTitle?: string;
     detectedLanguage?: SupportedLanguage;
+    detectedIntent?: PrimaryIntent;
     categories?: QueryCategory[];
   };
 }

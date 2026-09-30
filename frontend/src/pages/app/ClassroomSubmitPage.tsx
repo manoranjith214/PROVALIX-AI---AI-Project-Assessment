@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { classroomService } from '../../services/classroomService';
 import { teamService } from '../../services/teamService';
@@ -12,6 +12,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { ProjectDetails, Classroom, Team } from '../../types';
+import { validateMeaningfulText, isValidGitHubUrl } from '../../utils/validationUtils';
 import { 
   ArrowLeft, 
   UploadCloud, 
@@ -20,14 +21,21 @@ import {
   AlertCircle,
   Copy,
   Loader2,
-  Crown
+  Crown,
+  FileCode,
+  FileText,
+  Presentation,
+  GitBranch,
+  Video,
+  Check,
+  Trash2
 } from 'lucide-react';
 
 export const ClassroomSubmitPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { success, error } = useToast();
+  const { success, error, info } = useToast();
 
   const [classroom, setClassroom] = useState<Classroom | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -53,7 +61,46 @@ export const ClassroomSubmitPage: React.FC = () => {
   const [githubUrl, setGithubUrl] = useState('');
   const [liveDemoUrl, setLiveDemoUrl] = useState('');
 
+  // Real resource attachments
+  const [attachedResources, setAttachedResources] = useState<Array<{
+    type: string;
+    name: string;
+    size: string;
+    uploadedAt: string;
+    status: string;
+  }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeResourceType = useRef<string>('sourceCode');
+
   const [isLoading, setIsLoading] = useState(false);
+
+  const triggerFileInput = (type: string) => {
+    activeResourceType.current = type;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const type = activeResourceType.current;
+    setAttachedResources(prev => [
+      ...prev.filter(r => r.type !== type),
+      {
+        type,
+        name: file.name,
+        size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+        uploadedAt: new Date().toISOString(),
+        status: 'uploaded',
+      }
+    ]);
+    success(`Attached ${file.name}`);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleRemoveResource = (type: string) => {
+    setAttachedResources(prev => prev.filter(r => r.type !== type));
+    info(`Removed attachment for ${type}`);
+  };
 
   const loadInitialData = useCallback(async () => {
     if (!id) return;
@@ -100,17 +147,27 @@ export const ClassroomSubmitPage: React.FC = () => {
     setDescription(sample.description);
     setProblemStatement(sample.problemStatement);
     setProposedSolution(sample.proposedSolution);
-    setObjectives(sample.objectives);
-    setInnovation(sample.innovation);
-    setFeatures(sample.features);
-    setTargetUsers(sample.targetUsers);
+    setObjectives(sample.objectives || '');
+    setInnovation(sample.innovation || '');
+    setFeatures(sample.features || '');
+    setTargetUsers(sample.targetUsers || '');
     setTechnologies(sample.technologies.join(', '));
     setProgrammingLanguages(sample.programmingLanguages.join(', '));
-    setTestingApproach(sample.testingApproach);
-    setLimitations(sample.limitations);
-    setFutureEnhancements(sample.futureEnhancements);
+    setTestingApproach(sample.testingApproach || '');
+    setLimitations(sample.limitations || '');
+    setFutureEnhancements(sample.futureEnhancements || '');
     setGithubUrl(sample.githubUrl || '');
     setLiveDemoUrl(sample.liveDemoUrl || '');
+
+    if (sample.resources && Array.isArray(sample.resources) && sample.resources.length > 0) {
+      setAttachedResources(sample.resources.map(r => ({
+        type: r.type,
+        name: r.name,
+        size: r.size || '1.0 MB',
+        uploadedAt: r.uploadedAt || new Date().toISOString(),
+        status: 'uploaded',
+      })));
+    }
 
     success(`Reused data from "${sample.title}"! All metadata pre-filled.`);
   };
@@ -119,16 +176,71 @@ export const ClassroomSubmitPage: React.FC = () => {
     e.preventDefault();
     if (!classroom) return;
 
-    if (!title.trim()) {
-      error('Please enter a project title.');
+    // 1. Strict Project Metadata Validation
+    const titleVal = validateMeaningfulText(title, 5, 'Project Title');
+    if (!titleVal.isValid) {
+      error(titleVal.error || 'Please provide a valid project title.');
       return;
     }
 
-    // Check resource requirements
-    const isGithubRequired = classroom.resources?.some(r => r.type === 'github' && r.required);
-    if (isGithubRequired && !githubUrl.trim()) {
-      error('GitHub Repository URL is marked as a required resource for this classroom.');
+    const categoryVal = validateMeaningfulText(category, 3, 'Category / Domain');
+    if (!categoryVal.isValid) {
+      error(categoryVal.error || 'Please provide a valid project category.');
       return;
+    }
+
+    const descVal = validateMeaningfulText(description, 30, 'Executive Summary / Description');
+    if (!descVal.isValid) {
+      error(descVal.error || 'Please provide a meaningful description of at least 30 characters.');
+      return;
+    }
+
+    const problemVal = validateMeaningfulText(problemStatement, 30, 'Problem Statement');
+    if (!problemVal.isValid) {
+      error(problemVal.error || 'Please provide a meaningful problem statement of at least 30 characters.');
+      return;
+    }
+
+    const solutionVal = validateMeaningfulText(proposedSolution, 30, 'Proposed Solution');
+    if (!solutionVal.isValid) {
+      error(solutionVal.error || 'Please provide a meaningful proposed solution of at least 30 characters.');
+      return;
+    }
+
+    if (targetUsers.trim()) {
+      const targetVal = validateMeaningfulText(targetUsers, 5, 'Target Users');
+      if (!targetVal.isValid) {
+        error(targetVal.error || 'Please provide a valid target users definition.');
+        return;
+      }
+    }
+
+    if (!technologies.trim() && !programmingLanguages.trim()) {
+      error('Please provide at least one technology or programming language.');
+      return;
+    }
+
+    // 2. Strict Classroom Resource Requirements Validation
+    if (classroom.resources && classroom.resources.length > 0) {
+      const missingResources: string[] = [];
+      for (const res of classroom.resources) {
+        if (res.required) {
+          if (res.type === 'github') {
+            if (!isValidGitHubUrl(githubUrl)) {
+              missingResources.push('GitHub Repository URL (valid GitHub link)');
+            }
+          } else {
+            const hasResource = attachedResources.some(r => r.type === res.type && r.name);
+            if (!hasResource) {
+              missingResources.push(res.label || res.type);
+            }
+          }
+        }
+      }
+      if (missingResources.length > 0) {
+        error(`Missing required artifact(s): ${missingResources.join(', ')}. Please provide all required artifacts before submitting.`);
+        return;
+      }
     }
 
     if (classroom.submissionMode === 'Team') {
@@ -148,33 +260,36 @@ export const ClassroomSubmitPage: React.FC = () => {
       const selectedTeam = teams.find(t => t.id === selectedTeamId);
       const projectDetails: ProjectDetails = {
         id: `proj_${Date.now().toString().slice(-6)}`,
-        title,
-        category,
-        description,
-        problemStatement,
-        proposedSolution,
-        objectives,
-        innovation,
-        features,
-        targetUsers,
+        title: title.trim(),
+        category: category.trim(),
+        description: description.trim(),
+        problemStatement: problemStatement.trim(),
+        proposedSolution: proposedSolution.trim(),
+        objectives: objectives.trim(),
+        innovation: innovation.trim(),
+        features: features.trim(),
+        targetUsers: targetUsers.trim(),
         technologies: technologies ? technologies.split(',').map(s => s.trim()).filter(Boolean) : [],
         programmingLanguages: programmingLanguages ? programmingLanguages.split(',').map(s => s.trim()).filter(Boolean) : [],
-        testingApproach,
-        limitations,
-        futureEnhancements,
+        testingApproach: testingApproach.trim(),
+        limitations: limitations.trim(),
+        futureEnhancements: futureEnhancements.trim(),
         githubUrl: githubUrl.trim() || undefined,
         liveDemoUrl: liveDemoUrl.trim() || undefined,
-        resources: [
-          { type: 'sourceCode', name: 'submission_code.zip', size: '21.4 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-          { type: 'projectReport', name: 'submission_thesis.pdf', size: '5.8 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-        ],
+        resources: attachedResources.map(r => ({
+          type: r.type as any,
+          name: r.name,
+          size: r.size,
+          uploadedAt: r.uploadedAt || new Date().toISOString(),
+          status: 'uploaded' as const,
+        })),
         createdAt: new Date().toISOString(),
       };
 
       await classroomService.submitProject({
         classroomId: classroom.id,
-        submitterId: user.id,
-        submitterName: user.name,
+        submitterId: user!.id,
+        submitterName: user!.name,
         teamId: classroom.submissionMode === 'Team' ? selectedTeamId : undefined,
         teamName: classroom.submissionMode === 'Team' ? selectedTeam?.name : undefined,
         project: projectDetails,
@@ -342,7 +457,7 @@ export const ClassroomSubmitPage: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
                 <Input
-                  label="Project Title"
+                  label="Project Title *"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
                   placeholder="e.g. Distributed Consensus Engine"
@@ -350,7 +465,7 @@ export const ClassroomSubmitPage: React.FC = () => {
                 />
               </div>
               <Input
-                label="Category / Domain"
+                label="Category / Domain *"
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 placeholder="e.g. Cloud Systems"
@@ -361,11 +476,10 @@ export const ClassroomSubmitPage: React.FC = () => {
                 value={targetUsers}
                 onChange={e => setTargetUsers(e.target.value)}
                 placeholder="e.g. Enterprise Cloud Teams"
-                required
               />
               <div className="sm:col-span-2">
                 <Textarea
-                  label="Executive Summary"
+                  label="Executive Summary *"
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   rows={2}
@@ -382,14 +496,14 @@ export const ClassroomSubmitPage: React.FC = () => {
             </h3>
             <div className="space-y-4">
               <Textarea
-                label="Problem Statement"
+                label="Problem Statement *"
                 value={problemStatement}
                 onChange={e => setProblemStatement(e.target.value)}
                 rows={2}
                 required
               />
               <Textarea
-                label="Proposed Solution"
+                label="Proposed Solution *"
                 value={proposedSolution}
                 onChange={e => setProposedSolution(e.target.value)}
                 rows={2}
@@ -419,10 +533,11 @@ export const ClassroomSubmitPage: React.FC = () => {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Technologies & Frameworks"
+                label="Technologies & Frameworks *"
                 value={technologies}
                 onChange={e => setTechnologies(e.target.value)}
                 placeholder="e.g. Go, gRPC, Raft, Docker"
+                required
               />
               <Input
                 label="Programming Languages"
@@ -443,6 +558,91 @@ export const ClassroomSubmitPage: React.FC = () => {
                 onChange={e => setLiveDemoUrl(e.target.value)}
                 placeholder="https://..."
               />
+            </div>
+          </div>
+
+          {/* Section 4: Required & Supporting Artifacts */}
+          <div className="space-y-4 pt-4 border-t border-[#243047]">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <div>
+              <h3 className="text-xs font-bold text-purple-400 uppercase tracking-wider">
+                4. Required & Supporting Artifacts
+              </h3>
+              <p className="text-xs text-[#94A3B8] mt-0.5">
+                Attach real project deliverables according to this classroom's rubric requirements.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(classroom.resources || [
+                { type: 'sourceCode', label: 'Source Code Archive', required: true },
+                { type: 'projectReport', label: 'Project Report (PDF)', required: true },
+                { type: 'ppt', label: 'Presentation Deck (PPT)', required: false },
+                { type: 'github', label: 'GitHub Repository', required: false },
+              ]).map(res => {
+                if (res.type === 'github') return null;
+                const attached = attachedResources.find(r => r.type === res.type);
+                return (
+                  <div
+                    key={res.type}
+                    className={`p-3.5 rounded-xl border flex items-center justify-between transition-all ${
+                      attached
+                        ? 'border-emerald-500/40 bg-emerald-950/20'
+                        : res.required
+                        ? 'border-amber-500/30 bg-[#0F172A]'
+                        : 'border-[#243047] bg-[#0F172A]'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-100">{res.label || res.type}</span>
+                        <Badge variant={res.required ? 'amber' : 'slate'} size="sm">
+                          {res.required ? 'Required' : 'Optional'}
+                        </Badge>
+                      </div>
+                      {attached ? (
+                        <div className="text-[11px] text-emerald-400 font-mono flex items-center gap-1.5">
+                          <Check className="w-3 h-3" />
+                          <span className="truncate max-w-[160px]">{attached.name}</span>
+                          <span className="text-slate-400">({attached.size})</span>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-400">No file attached yet</p>
+                      )}
+                    </div>
+
+                    <div>
+                      {attached ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-950/30 p-1.5"
+                          onClick={() => handleRemoveResource(res.type)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          className="text-xs"
+                          leftIcon={<UploadCloud className="w-3.5 h-3.5" />}
+                          onClick={() => triggerFileInput(res.type)}
+                        >
+                          Attach
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

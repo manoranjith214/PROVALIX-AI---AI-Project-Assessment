@@ -1,6 +1,6 @@
 import { evaluationRepository } from '../repositories/evaluationRepository';
 import { submissionRepository } from '../repositories/submissionRepository';
-import { defaultAIProvider } from '../integrations/ai/MockAIProvider';
+import { getAIProvider } from '../integrations/ai';
 import { notificationService } from './notificationService';
 import { AppError } from '../middleware/errorMiddleware';
 import { SubmitVivaMarksInput } from '../validators/vivaValidator';
@@ -45,8 +45,9 @@ export class VivaService {
       throw new AppError('Only assigned evaluators or classroom owners can generate viva questions', 403);
     }
 
-    // Call AI provider to generate exactly 5 project-tailored questions across the 5 categories
-    const generatedQuestions = await defaultAIProvider.generateVivaQuestions(submission);
+    // Call central AI provider factory to generate exactly 5 project-tailored questions across the 5 categories
+    const aiProvider = getAIProvider();
+    const generatedQuestions = await aiProvider.generateVivaQuestions(submission);
 
     // Persist questions in database
     const savedQuestions = await evaluationRepository.saveGeneratedVivaQuestions(
@@ -91,7 +92,8 @@ export class VivaService {
     if (!questions || questions.length === 0) {
       if (isAuthorizedFaculty) {
         // Auto-generate for evaluator convenience
-        const generated = await defaultAIProvider.generateVivaQuestions(submission);
+        const aiProvider = getAIProvider();
+        const generated = await aiProvider.generateVivaQuestions(submission);
         questions = await evaluationRepository.saveGeneratedVivaQuestions(submissionId, generated);
       } else {
         throw new AppError('Viva questions have not been generated yet for this submission', 400);

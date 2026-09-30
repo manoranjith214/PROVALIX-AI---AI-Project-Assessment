@@ -21,12 +21,14 @@ export function sendError(
   res: Response,
   message: string,
   statusCode = 500,
-  errors: any[] = []
+  errors: any[] = [],
+  extra?: Record<string, any>
 ): Response {
-  const payload: ApiResponse = {
+  const payload: any = {
     success: false,
     message,
     errors,
+    ...(extra || {}),
   };
   return res.status(statusCode).json(payload);
 }

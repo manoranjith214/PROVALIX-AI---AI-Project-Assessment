@@ -118,11 +118,11 @@ export function mapBackendSubmission(s: any): ClassroomSubmission {
       createdAt: s.submittedAt || new Date().toISOString(),
     },
     aiComponent: s.aiEvaluation ? {
-      rawScore: s.aiEvaluation.rawScore || 45,
-      codeSimilarity: s.aiEvaluation.codeSimilarity || 5,
-      reportSimilarity: s.aiEvaluation.reportSimilarity || 8,
-      deduction: s.aiEvaluation.deduction || 0,
-      finalScore: s.aiEvaluation.finalScore || 45,
+      rawScore: s.aiEvaluation.rawScore ?? 0,
+      codeSimilarity: s.aiEvaluation.codeSimilarity ?? 0,
+      reportSimilarity: s.aiEvaluation.reportSimilarity ?? 0,
+      deduction: s.aiEvaluation.deduction ?? 0,
+      finalScore: s.aiEvaluation.finalScore ?? 0,
       isDemoData: false,
     } : undefined,
     facultyEvaluation: s.facultyEvaluation ? {

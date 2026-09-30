@@ -113,7 +113,7 @@ export const ProjectReportsPage: React.FC = () => {
       if (err?.message?.includes('Authentication required') || err?.status === 401) {
         setIsUnauthorized(true);
       } else {
-        setErrorMessage(err?.message || 'Failed to load project reports from database.');
+        setErrorMessage('Unable to load project reports. Please retry.');
       }
       setReports([]);
       setTotalCount(0);

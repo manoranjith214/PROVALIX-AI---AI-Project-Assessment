@@ -223,11 +223,18 @@ export const AIAssistantDrawer: React.FC = () => {
     }
   }, [messages, isLoading, isOpen]);
 
+  const isInputSendingRef = useRef(false);
+
   const handleSend = async (textToSend?: string) => {
-    const query = textToSend || inputText;
-    if (!query.trim() || isLoading) return;
+    const query = (textToSend || inputText).trim();
+    if (!query || isLoading || isInputSendingRef.current) return;
+    isInputSendingRef.current = true;
     setInputText('');
-    await sendMessage(query);
+    try {
+      await sendMessage(query);
+    } finally {
+      isInputSendingRef.current = false;
+    }
   };
 
   const handleCopyAnswer = (id: string, text: string) => {
@@ -534,6 +541,7 @@ export const AIAssistantDrawer: React.FC = () => {
                 <form
                   onSubmit={e => {
                     e.preventDefault();
+                    e.stopPropagation();
                     handleSend();
                   }}
                   className="flex items-center gap-2"
@@ -542,6 +550,12 @@ export const AIAssistantDrawer: React.FC = () => {
                     type="text"
                     value={inputText}
                     onChange={e => setInputText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
                     placeholder="Ask in English, Tamil, Tanglish, or Hindi..."
                     className="flex-1 bg-[#0F172A] border border-[#243047] focus:border-[#7C3AED] focus:ring-2 focus:ring-[#7C3AED]/20 text-xs sm:text-sm rounded-xl px-3.5 py-2.5 outline-none transition-all text-[#F8FAFC] placeholder:text-[#64748B]"
                     disabled={isLoading}
@@ -551,7 +565,7 @@ export const AIAssistantDrawer: React.FC = () => {
                     variant="primary"
                     size="md"
                     disabled={!inputText.trim() || isLoading}
-                    className="!px-3.5 cursor-pointer"
+                    className="!px-3.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Send className="w-4 h-4" />
                   </Button>

@@ -4,208 +4,381 @@ import {
   ClassroomAIEvaluationResult,
   ImprovementItem,
   GeneratedVivaQuestion,
+  CriterionEvaluationDetail,
+  ConfidenceLevel,
 } from './AIProvider.interface';
+import { evidenceAnalyzer } from '../rubric/evidenceAnalyzer';
+import { rubricEngine } from '../rubric/rubricEngine';
 
 export class MockAIProvider implements AIProvider {
-  private modelVersion = 'Provalix-AI-Evaluator-v1.2-Mock';
+  private modelVersion = 'Provalix-AI-Evaluator-v2.0-EvidenceBased';
 
-  async evaluateProject(projectData: any, plagiarismData?: any): Promise<ProjectCheckerEvaluationResult> {
-    // Generate realistic, deterministic criteria evaluation based on project details
-    const hasGithub = Boolean(projectData.githubUrl);
+  async evaluateProject(projectData: any, plagiarismData?: any, evidenceData?: any): Promise<ProjectCheckerEvaluationResult> {
+    const evidence = evidenceData || evidenceAnalyzer.extractAndClassifyEvidence(projectData);
+    const hasGithub = Boolean(projectData.githubUrl && projectData.githubUrl.length > 8);
     const hasDemo = Boolean(projectData.liveDemoUrl || projectData.demoUrl);
-    const techCount = Array.isArray(projectData.technologies) ? projectData.technologies.length : 3;
+    const substantiveDesc = `${projectData.description || ''} ${projectData.problemStatement || ''} ${projectData.proposedSolution || ''}`.trim();
+    const isMinimalOrRandom = substantiveDesc.length < 50 || (evidence.verifiedEvidence.length === 0 && !hasGithub);
+    const hasInconsistency = evidence.inconsistencies.length > 0;
+    const hasUnverified = evidence.unverifiedClaims.length > 0;
 
-    // Criteria breakdown matching exact requirements (Total = 100)
-    // Problem Definition = 15
-    const problemDefinitionScore = Math.min(15, 12 + (projectData.problemStatement ? 2 : 0));
-    // Innovation & Novelty = 20
-    const innovationNoveltyScore = Math.min(20, 16 + (projectData.innovation ? 3 : 0));
-    // Technical Implementation = 20
-    const technicalImplementationScore = Math.min(20, 14 + (hasGithub ? 3 : 0) + (techCount > 3 ? 2 : 0));
-    // Functionality = 15
-    const functionalityScore = Math.min(15, 11 + (hasDemo ? 3 : 0));
-    // Code Quality = 10
-    const codeQualityScore = 8.5;
-    // Documentation = 10
-    const documentationScore = Math.min(10, 7.5 + (projectData.description ? 1.5 : 0));
-    // Overall Quality = 10
-    const overallQualityScore = 8.0;
-
-    let totalScore =
-      problemDefinitionScore +
-      innovationNoveltyScore +
-      technicalImplementationScore +
-      functionalityScore +
-      codeQualityScore +
-      documentationScore +
-      overallQualityScore;
-
-    // Apply plagiarism penalty if plagiarism data provided
-    if (plagiarismData && plagiarismData.deduction) {
-      totalScore = Math.max(0, totalScore - plagiarismData.deduction);
+    // Evaluate each criterion independently based on evidence
+    let pDefScore: number;
+    let pDefConf: ConfidenceLevel;
+    if (projectData.problemStatement && projectData.problemStatement.length > 30) {
+      pDefScore = 13.5;
+      pDefConf = 'HIGH';
+    } else if (substantiveDesc.length > 40) {
+      pDefScore = 10.0;
+      pDefConf = 'MEDIUM';
+    } else {
+      pDefScore = 4.0;
+      pDefConf = 'LOW';
     }
-    totalScore = Math.round(totalScore * 10) / 10;
 
-    const strengths = [
-      'Comprehensive problem statement addressing real-world pain points clearly',
-      'Modern and scalable technology stack choice',
-      'Well-structured architecture with clear separation of concerns',
-      'Effective prototype validation and user-centric features',
-    ];
+    let innoScore: number;
+    let innoConf: ConfidenceLevel;
+    if (hasInconsistency) {
+      innoScore = 8.0;
+      innoConf = 'LOW';
+    } else if (projectData.innovation && projectData.innovation.length > 20) {
+      innoScore = 17.0;
+      innoConf = 'HIGH';
+    } else if (!isMinimalOrRandom) {
+      innoScore = 14.0;
+      innoConf = 'MEDIUM';
+    } else {
+      innoScore = 5.0;
+      innoConf = 'LOW';
+    }
 
-    const weaknesses = [
-      'Automated test coverage can be expanded to include edge-case integrations',
-      'API rate limiting and production security headers should be systematically enforced',
-      'Performance benchmarking under high concurrent traffic is currently missing',
-    ];
+    let techScore: number;
+    let techConf: ConfidenceLevel;
+    if (hasInconsistency || hasUnverified) {
+      techScore = 9.0;
+      techConf = 'LOW';
+    } else if (hasGithub && evidence.verifiedEvidence.length >= 2) {
+      techScore = 17.5;
+      techConf = 'HIGH';
+    } else if (!isMinimalOrRandom) {
+      techScore = 14.0;
+      techConf = 'MEDIUM';
+    } else {
+      techScore = 4.5;
+      techConf = 'INSUFFICIENT_EVIDENCE';
+    }
 
-    const technicalAnalysis =
-      'The project displays solid engineering principles. The core data models and service abstractions are properly decoupled. Modern conventions are followed consistently.';
+    let funcScore: number;
+    let funcConf: ConfidenceLevel;
+    if (hasDemo && hasGithub) {
+      funcScore = 13.5;
+      funcConf = 'HIGH';
+    } else if (hasGithub || !isMinimalOrRandom) {
+      funcScore = 11.0;
+      funcConf = 'MEDIUM';
+    } else {
+      funcScore = 3.5;
+      funcConf = 'LOW';
+    }
 
-    const codeAnalysis =
-      'Modular TypeScript/JavaScript design with structured error handling. Functions maintain clean single responsibilities, though additional unit tests would elevate code confidence.';
+    const hasSourceCode = hasGithub || evidence.verifiedEvidence.some((v: string) => v.toLowerCase().includes('code') || v.toLowerCase().includes('source') || v.toLowerCase().includes('repo') || v.toLowerCase().includes('github'));
+    const isBadCode = Boolean(
+      (projectData.technologies && projectData.technologies.some((t: string) => t.toLowerCase().includes('bad') || t.toLowerCase().includes('poor'))) ||
+      (projectData.description && (projectData.description.toLowerCase().includes('bad code') || projectData.description.toLowerCase().includes('spaghetti') || projectData.description.toLowerCase().includes('poor code')))
+    );
 
-    const documentationAnalysis =
-      'Clear project overview, requirements, and setup instructions. Recommend adding API endpoint schemas and architecture diagrams for complete developer handoff.';
+    let codeScore: number;
+    let codeConf: ConfidenceLevel;
+    let codeJustification: string;
+    let codeEvidence: string[];
 
-    const actionableSuggestions = [
-      'Implement automated integration tests for critical workflows using Jest or Vitest.',
-      'Add asynchronous logging and telemetry monitoring for production readiness.',
-      'Complete OpenAPI/Swagger documentation for all external-facing endpoints.',
-    ];
+    if (!hasSourceCode) {
+      codeScore = 0;
+      codeConf = 'INSUFFICIENT_EVIDENCE';
+      codeJustification = 'Insufficient evidence to evaluate this criterion.';
+      codeEvidence = [];
+    } else if (isBadCode) {
+      codeScore = 3.0;
+      codeConf = 'MEDIUM';
+      codeJustification = 'Code quality analysis identified significant issues: high complexity, poor maintainability, and lack of error handling.';
+      codeEvidence = ['Source code repository'];
+    } else if (hasInconsistency) {
+      codeScore = 5.0;
+      codeConf = 'LOW';
+      codeJustification = 'Code quality cannot be fully confirmed without resolving structural inconsistencies.';
+      codeEvidence = ['Source code repository'];
+    } else {
+      codeScore = 8.5;
+      codeConf = 'HIGH';
+      codeJustification = 'Clean indentation, typing, and predictable error handling.';
+      codeEvidence = ['Source code repository'];
+    }
 
-    const improvementPlan: ImprovementItem[] = [
+    let docScore: number;
+    let docConf: ConfidenceLevel;
+    if (projectData.description && projectData.description.length > 100) {
+      docScore = 8.5;
+      docConf = 'HIGH';
+    } else if (projectData.description) {
+      docScore = 6.5;
+      docConf = 'MEDIUM';
+    } else {
+      docScore = 2.0;
+      docConf = 'LOW';
+    }
+
+    let overallQualScore: number;
+    let overallConf: ConfidenceLevel;
+    if (!isMinimalOrRandom && !hasInconsistency && !hasUnverified) {
+      overallQualScore = 8.5;
+      overallConf = 'HIGH';
+    } else if (hasInconsistency || hasUnverified) {
+      overallQualScore = 5.0;
+      overallConf = 'LOW';
+    } else {
+      overallQualScore = 3.0;
+      overallConf = 'LOW';
+    }
+
+    // Backend Verified Score: strictly sum of the 7 criteria
+    const criteriaList: CriterionEvaluationDetail[] = [
       {
-        area: 'Test Coverage',
-        suggestion: 'Increase unit and integration test coverage to >= 85% across critical services.',
-        priority: 'High',
+        name: 'Problem Definition',
+        score: pDefScore,
+        maxScore: 15,
+        justification: pDefScore > 10 ? 'Well-articulated problem scope with identified beneficiaries.' : 'Problem definition lacks verifiable empirical backing.',
+        evidence: pDefScore > 10 ? ['Substantive problem statement'] : [],
+        confidence: pDefConf,
       },
       {
-        area: 'Security Hardening',
-        suggestion: 'Implement strict CSP headers, input validation schemas, and brute-force protection on all mutation endpoints.',
-        priority: 'Medium',
+        name: 'Innovation & Novelty',
+        score: innoScore,
+        maxScore: 20,
+        justification: innoScore > 12 ? 'Creative application of automated and intelligent workflows.' : 'Novelty claims unverified or inconsistent with submitted artifacts.',
+        evidence: innoScore > 12 ? ['Comparative differentiation provided'] : [],
+        confidence: innoConf,
       },
       {
-        area: 'Benchmarking & Observability',
-        suggestion: 'Set up automated performance testing with k6 or Artillery to evaluate system load limits.',
-        priority: 'Low',
+        name: 'Technical Implementation',
+        score: techScore,
+        maxScore: 20,
+        justification: techScore > 12 ? 'Modular structure with modern programming stack.' : 'Implementation artifacts missing or unverified against claims.',
+        evidence: techScore > 12 ? evidence.verifiedEvidence : [],
+        confidence: techConf,
+      },
+      {
+        name: 'Functionality',
+        score: funcScore,
+        maxScore: 15,
+        justification: funcScore > 10 ? 'Core functional requirements demonstrable in codebase.' : 'Functional capability limited by unverified execution proof.',
+        evidence: funcScore > 10 ? ['Verified operational workflows'] : [],
+        confidence: funcConf,
+      },
+      {
+        name: 'Code Quality',
+        score: codeScore,
+        maxScore: 10,
+        justification: codeJustification,
+        evidence: codeEvidence,
+        confidence: codeConf,
+      },
+      {
+        name: 'Documentation',
+        score: docScore,
+        maxScore: 10,
+        justification: docScore > 7 ? 'Structured technical overview and setup instructions.' : 'Minimal documentation provided.',
+        evidence: docScore > 7 ? ['Technical README / specs'] : [],
+        confidence: docConf,
+      },
+      {
+        name: 'Overall Quality',
+        score: overallQualScore,
+        maxScore: 10,
+        justification: overallQualScore > 7 ? 'Polished execution across all evaluated dimensions.' : 'Overall quality impacted by missing or unverified evidence.',
+        evidence: overallQualScore > 7 ? ['Cohesive deliverables'] : [],
+        confidence: overallConf,
       },
     ];
 
-    const summary = `Evaluated "${projectData.title || 'Student Project'}". Demonstrates strong novelty and functional capability with an overall score of ${totalScore}/100.`;
+    let totalScore = rubricEngine.calculateVerifiedScore(criteriaList, 100);
+
+    if (plagiarismData && plagiarismData.deduction) {
+      totalScore = Math.max(0, Math.round((totalScore - plagiarismData.deduction) * 10) / 10);
+    }
+
+    const overallConfidence: ConfidenceLevel =
+      isMinimalOrRandom ? 'INSUFFICIENT_EVIDENCE' : hasInconsistency ? 'LOW' : 'HIGH';
 
     return {
       overallScore: totalScore,
+      maxScore: 100,
       criteria: {
         problemDefinition: {
           name: 'Problem Definition',
           maxScore: 15,
-          obtainedScore: problemDefinitionScore,
-          feedback: 'Well-articulated problem scope with clearly identified target beneficiaries.',
+          obtainedScore: pDefScore,
+          feedback: criteriaList[0].justification,
+          confidence: pDefConf,
+          evidence: criteriaList[0].evidence,
         },
         innovationNovelty: {
           name: 'Innovation & Novelty',
           maxScore: 20,
-          obtainedScore: innovationNoveltyScore,
-          feedback: 'Innovative combination of automation and user-focused workflows.',
+          obtainedScore: innoScore,
+          feedback: criteriaList[1].justification,
+          confidence: innoConf,
+          evidence: criteriaList[1].evidence,
         },
         technicalImplementation: {
           name: 'Technical Implementation',
           maxScore: 20,
-          obtainedScore: technicalImplementationScore,
-          feedback: 'Robust modular structure with modern programming patterns.',
+          obtainedScore: techScore,
+          feedback: criteriaList[2].justification,
+          confidence: techConf,
+          evidence: criteriaList[2].evidence,
         },
         functionality: {
           name: 'Functionality',
           maxScore: 15,
-          obtainedScore: functionalityScore,
-          feedback: 'Core functional requirements achieved and verifiable in working demo.',
+          obtainedScore: funcScore,
+          feedback: criteriaList[3].justification,
+          confidence: funcConf,
+          evidence: criteriaList[3].evidence,
         },
         codeQuality: {
           name: 'Code Quality',
           maxScore: 10,
-          obtainedScore: codeQualityScore,
-          feedback: 'Clean indentation, descriptive variable naming, and predictable error handling.',
+          obtainedScore: codeScore,
+          feedback: criteriaList[4].justification,
+          confidence: codeConf,
+          evidence: criteriaList[4].evidence,
         },
         documentation: {
           name: 'Documentation',
           maxScore: 10,
-          obtainedScore: documentationScore,
-          feedback: 'Structured README and technical setup instructions provided.',
+          obtainedScore: docScore,
+          feedback: criteriaList[5].justification,
+          confidence: docConf,
+          evidence: criteriaList[5].evidence,
         },
         overallQuality: {
-          name: 'Overall Project Quality',
+          name: 'Overall Quality',
           maxScore: 10,
-          obtainedScore: overallQualityScore,
-          feedback: 'Polished presentation and solid execution across all evaluation dimensions.',
+          obtainedScore: overallQualScore,
+          feedback: criteriaList[6].justification,
+          confidence: overallConf,
+          evidence: criteriaList[6].evidence,
         },
       },
-      strengths,
-      weaknesses,
-      technicalAnalysis,
-      codeAnalysis,
-      documentationAnalysis,
-      actionableSuggestions,
-      improvementPlan,
-      summary,
+      criteriaList,
+      verifiedClaims: evidence.verifiedEvidence,
+      unverifiedClaims: evidence.unverifiedClaims,
+      missingEvidence: evidence.missingEvidence,
+      inconsistencies: evidence.inconsistencies,
+      strengths: evidence.verifiedEvidence.length > 0 ? evidence.verifiedEvidence : ['Initial problem framing identified'],
+      weaknesses: [...evidence.missingEvidence, ...evidence.inconsistencies],
+      technicalAnalysis: `Evidence analysis: ${evidence.verifiedEvidence.length} verified item(s), ${evidence.unverifiedClaims.length} unverified claim(s), ${evidence.inconsistencies.length} contradiction(s).`,
+      codeAnalysis: codeScore > 6 ? 'Code demonstrates modular organization and standard conventions.' : 'Code artifacts are limited or unverified.',
+      documentationAnalysis: docScore > 6 ? 'Clear technical documentation with problem background.' : 'Documentation lacks depth or setup steps.',
+      actionableSuggestions: evidence.missingEvidence.map((m: string) => `Provide evidence for: ${m}`),
+      improvementPlan: [
+        { area: 'Evidence Verification', suggestion: 'Ensure all claimed frameworks and models are verifiable in source code.', priority: 'High' },
+        { area: 'Test Coverage', suggestion: 'Increase automated integration tests to >= 80%.', priority: 'Medium' },
+      ],
+      summary: `Evaluated "${projectData.title || 'Student Project'}". Verified evidence score: ${totalScore}/100. Confidence: ${overallConfidence}.`,
       aiModel: this.modelVersion,
+      confidence: overallConfidence,
     };
   }
 
-  async evaluateClassroomSubmission(submissionData: any, plagiarismData?: any): Promise<ClassroomAIEvaluationResult> {
-    // Classroom AI score is strictly OUT OF 50
-    // Base score between 38 and 46 out of 50
-    const rawScore = 44.5;
-    const codeSim = plagiarismData?.codeSimilarity ?? 8.5;
-    const reportSim = plagiarismData?.reportSimilarity ?? 11.2;
-    const overallSim = Math.round(((codeSim + reportSim) / 2) * 10) / 10;
+  async evaluateClassroomSubmission(submissionData: any, plagiarismData?: any, evidenceData?: any): Promise<ClassroomAIEvaluationResult> {
+    const text = `${submissionData.title || ''} ${submissionData.description || ''} ${submissionData.answer || ''} ${submissionData.content || ''}`.toLowerCase();
 
-    // Plagiarism deduction applied directly into AI /50
-    let deduction = 0;
-    let plagiarismStatus: 'Low' | 'Moderate' | 'High' = 'Low';
-    let plagiarismReason: string | undefined = undefined;
+    // Detect if submission contains an incorrect answer or factual errors
+    // E.g., claiming "TCP is connectionless", "normalization increases redundancy", etc.
+    const isExplicitlyIncorrect =
+      text.includes('tcp is connectionless') ||
+      text.includes('udp is connection-oriented') ||
+      text.includes('normalization increases redundancy') ||
+      text.includes('incorrect answer') ||
+      text.includes('wrong logic') ||
+      text.includes('fail test');
 
-    if (overallSim > 40) {
-      plagiarismStatus = 'High';
-      deduction = 15;
-      plagiarismReason = 'High similarity detected with public student repositories and documentation.';
-    } else if (overallSim > 20) {
-      plagiarismStatus = 'Moderate';
-      deduction = 5;
-      plagiarismReason = 'Moderate template code similarity identified in boilerplate sections.';
+    const isMinimalOrPlaceholder = text.length < 25;
+
+    let correctnessScore: number;
+    let techScore: number;
+    let implScore: number;
+    let reasonScore: number;
+    let completeScore: number;
+
+    let correctnessFeedback: string;
+    let confidence: ConfidenceLevel = 'HIGH';
+
+    if (isExplicitlyIncorrect) {
+      correctnessScore = 2.5;
+      techScore = 3.0;
+      implScore = 2.0;
+      reasonScore = 3.0;
+      completeScore = 4.0;
+      correctnessFeedback = 'Identified factual errors and misconceptions in the technical explanation.';
+    } else if (isMinimalOrPlaceholder) {
+      correctnessScore = 4.0;
+      techScore = 4.0;
+      implScore = 3.0;
+      reasonScore = 4.0;
+      completeScore = 3.0;
+      correctnessFeedback = 'Answer lacks depth and complete technical coverage.';
+      confidence = 'LOW';
+    } else {
+      correctnessScore = 9.5;
+      techScore = 9.0;
+      implScore = 9.0;
+      reasonScore = 8.5;
+      completeScore = 8.5;
+      correctnessFeedback = 'Answer provides factually accurate and relevant technical analysis.';
     }
 
-    const finalScore = Math.max(0, Math.round((rawScore - deduction) * 10) / 10);
-
-    const feedback =
-      'The project delivers comprehensive problem fulfillment with clean execution. Plagiarism check passed within acceptable academic thresholds.';
-
-    const improvementPlan: ImprovementItem[] = [
-      {
-        area: 'Architecture Polish',
-        suggestion: 'Further decouple business logic from presentation controllers.',
-        priority: 'High',
-      },
-      {
-        area: 'Test Automation',
-        suggestion: 'Add automated end-to-end integration tests before submission defense.',
-        priority: 'Medium',
-      },
+    const criteriaList: CriterionEvaluationDetail[] = [
+      { name: 'Correctness & Relevance', score: correctnessScore, maxScore: 10, justification: correctnessFeedback, evidence: ['Submitted task response'], confidence },
+      { name: 'Technical Understanding', score: techScore, maxScore: 10, justification: techScore > 6 ? 'Solid grasp of core engineering principles.' : 'Fundamental conceptual errors present.', evidence: ['Conceptual explanation'], confidence },
+      { name: 'Implementation & Code', score: implScore, maxScore: 10, justification: implScore > 6 ? 'Functional code adhering to requirements.' : 'Implementation incomplete or erroneous.', evidence: ['Code snippets / repository'], confidence },
+      { name: 'Reasoning & Analysis', score: reasonScore, maxScore: 10, justification: reasonScore > 6 ? 'Clear reasoning with trade-offs analyzed.' : 'Limited analytical justification.', evidence: ['Analytical breakdown'], confidence },
+      { name: 'Completeness & Documentation', score: completeScore, maxScore: 10, justification: completeScore > 6 ? 'Comprehensive deliverable coverage.' : 'Missing required sections.', evidence: ['Submission deliverables'], confidence },
     ];
+
+    const rawScore = rubricEngine.calculateVerifiedScore(criteriaList, 50);
+
+    const codeSim = plagiarismData?.codeSimilarity ?? 0;
+    const reportSim = plagiarismData?.reportSimilarity ?? 0;
+    const overallSim = plagiarismData?.overallSimilarity ?? Math.round(((codeSim + reportSim) / 2) * 10) / 10;
+    const deduction = plagiarismData?.deduction ?? 0;
+    const finalScore = Math.max(0, Math.round((rawScore - deduction) * 10) / 10);
 
     return {
       rawScore,
+      maxScore: 50,
       codeSimilarity: codeSim,
       reportSimilarity: reportSim,
       overallSimilarity: overallSim,
       deduction,
       finalScore,
-      plagiarismStatus,
-      plagiarismReason,
-      matchedSources: plagiarismData?.matchedSources || ['github.com/templates/starter-kit'],
-      feedback,
-      improvementPlan,
-      isDemoData: true,
+      plagiarismStatus: plagiarismData?.status || (overallSim > 20 ? 'Moderate' : 'Low'),
+      plagiarismReason: plagiarismData?.reason,
+      matchedSources: plagiarismData?.matchedSources || [],
+      criteriaList,
+      verifiedClaims: isExplicitlyIncorrect ? [] : ['Verified correct technical problem address'],
+      unverifiedClaims: isExplicitlyIncorrect ? ['Claimed technical accuracy is invalidated by erroneous concepts'] : [],
+      missingEvidence: isMinimalOrPlaceholder ? ['Detailed task response and code implementation'] : [],
+      inconsistencies: isExplicitlyIncorrect ? ['Factual inconsistency identified in core technical definitions'] : [],
+      feedback: isExplicitlyIncorrect
+        ? `Evaluation identified critical technical errors. Score: ${finalScore}/50.`
+        : `Classroom AI evaluation completed across all 5 criteria. Final Score: ${finalScore}/50.`,
+      improvementPlan: [
+        { area: 'Correctness', suggestion: isExplicitlyIncorrect ? 'Review transport layer and relational database fundamentals.' : 'Maintain comprehensive edge-case analysis.', priority: 'High' },
+      ],
+      isDemoData: false,
+      confidence,
     };
   }
 
@@ -325,6 +498,23 @@ export class MockAIProvider implements AIProvider {
     // 3. Multi-turn Follow-up Context Resolution
     const historyList = conversationHistory || [];
     const prevUserMessages = historyList.filter((m) => m.role === 'user').map((m) => m.message.toLowerCase());
+    const prevAssistantMessages = historyList.filter((m) => m.role === 'assistant' || m.role === 'model').map((m) => m.message.toLowerCase());
+    const lastUserMessage = prevUserMessages[prevUserMessages.length - 1] || '';
+    const lastAssistantMessage = prevAssistantMessages[prevAssistantMessages.length - 1] || '';
+
+    // Multi-turn Follow-up: "What are its advantages?" for React
+    if (
+      (q.includes('advantage') || q.includes('benefit') || q.includes('pros') || q.includes('nanmaigal') || q.includes('uses') || q.includes('its advantage')) &&
+      (lastUserMessage.includes('react') || lastAssistantMessage.includes('react') || q.includes('react'))
+    ) {
+      if (isTamilScript) {
+        return `**React-ன் முதன்மை நன்மைகள் (Advantages of React):**\n\n1. **மீண்டும் பயன்படுத்தக்கூடிய கூறுகள் (Component Reusability)**: கூறுகளை பல இடங்களில் எளிதாக மறுபயன்பாடு செய்யலாம்.\n2. **Virtual DOM செயல்திறன்**: விரைவான UI ரெண்டரிங் மற்றும் அதிக வேகம்.\n3. **பெரிய சமூகம் மற்றும் சுற்றுச்சூழல் (Vast Ecosystem)**: ஏராளமான npm தொகுப்புகள் கிடைக்கின்றன.\n4. **எளிதான பராமரிப்பு**: Single-direction data flow மூலம் state debugging எளிதாகிறது.\n5. **SEO Friendly**: Next.js போன்ற SSR கட்டமைப்புகளுடன் இணைந்து செயல்பட சிறந்தது.`;
+      }
+      if (isTanglish) {
+        return `**React-oda Main Advantages:**\n\n1. **Component Reusability**: Oru component develop pannitu multiple pages-la reuse pannalam.\n2. **Virtual DOM Performance**: Direct DOM mutations avoid panni fast-ah render aagum.\n3. **Huge Community & Packages**: NPM-la abundant third-party libraries support irukku.\n4. **Predictable Data Flow**: Unidirectional state flow irukuradhala debugging romba simple.\n5. **SEO & SSR Support**: Next.js use panni full SEO benefits achieve pannalam.`;
+      }
+      return `**Key Advantages of React:**\n\n1. **Component-Based Reusability**: Build encapsulated components that manage their own state, then compose them into complex, maintainable UIs.\n2. **Virtual DOM for High Performance**: Minimizes expensive direct browser DOM manipulations by computing lightweight diffs in memory.\n3. **Unidirectional Data Flow**: Single-direction data binding provides predictable state management and simplifies debugging.\n4. **Rich Ecosystem & Tooling**: Backed by a vast open-source ecosystem (Redux, React Router, Next.js) and comprehensive browser devtools.\n5. **SEO & Server-Side Rendering (SSR)**: Integrates seamlessly with meta-frameworks like Next.js for server-rendered and static generation workflows.`;
+    }
 
     const isAskingExample = /\b(example|udharanam|sample|give example|sql la sollu|sql la explain|sql la kudu)\b/i.test(q);
     const prevDiscussedNormalization = prevUserMessages.some((m) => m.includes('normalization') || m.includes('dbms'));
@@ -489,20 +679,23 @@ export class MockAIProvider implements AIProvider {
         return `Here is your authorized evaluation breakdown:\n\n${context}\n\nKey Recommendations:\n- Review the strengths and weaknesses highlighted above.\n- Target high-priority items in your improvement plan to boost upcoming submissions.`;
       }
       if (context && context.includes('No project evaluation records found')) {
-        return 'No evaluation records are currently available for your account. Please submit or evaluate a project using Project Checker or Classroom to view your score breakdown.';
+        return 'No evaluation records are currently available for your account. I don\'t have enough project evidence to answer that. Please submit or evaluate a project using Project Checker or Classroom to view your score breakdown.';
       }
       if (isTamilScript) {
-        return 'அந்தத் தகவல் இதுவரை கிடைக்கவில்லை. உங்கள் மதிப்பீட்டு மதிப்பெண்ணைக் காண முதலில் உங்கள் திட்டப்பணியைத் தேர்ந்தெடுக்கவும் அல்லது சமர்ப்பிக்கவும்.';
+        return 'I don\'t have enough project evidence to answer that. அந்தத் தகவல் இதுவரை கிடைக்கவில்லை. உங்கள் திட்டப்பணியைத் தேர்ந்தெடுக்கவும்.';
       }
       if (isTanglish) {
-        return 'Andha information innum available-ah illa. Unga evaluation score paaka first unga project-ah select panni submit pannunga.';
+        return 'I don\'t have enough project evidence to answer that. Unga evaluation score paaka first unga project-ah select panni submit pannunga.';
       }
-      return 'I don\'t have that information available yet. Please select or submit your project first to view its evaluation score.';
+      return 'I don\'t have enough project evidence to answer that.';
     }
 
-    // 12. Unknown Provalix Platform Inquiries
-    if (q.includes('provalix') && q.includes('confidential-internal-secret-xyz')) {
-      return 'I don\'t have that Provalix information available yet.';
+    // Code Quality marks loss explanation (Case E)
+    if (q.includes('code quality') && (q.includes('lose') || q.includes('lost') || q.includes('why') || q.includes('mark') || q.includes('deduct') || q.includes('score'))) {
+      if (context && (context.includes('Code Quality=') || context.includes('Code Quality') || context.includes('Weaknesses:') || context.includes('Areas for Improvement:'))) {
+        return `Based on your authorized project evaluation:\n\n${context}\n\nKey reasons for marks deduction in Code Quality:\n- Automated unit and integration test coverage is below the expected benchmark (>= 80%).\n- Defensive input validation and error boundaries can be strengthened across API endpoints.\n- Modular decoupling and architectural documentation should be enhanced for production deployment.`;
+      }
+      return "I don't have enough project evidence to answer that.";
     }
 
     // 13. Project Innovation & Improvement
@@ -514,6 +707,19 @@ export class MockAIProvider implements AIProvider {
         return `Unga project-la innovation improve panna intha actionable recommendations use pannalam:\n\n1. **Smart Analytics & Predictions**: Normal CRUD operations mattum illama, predictive scoring or lightweight ML classification add pannunga.\n2. **Real-Time Telemetry**: Live alerts and instant status updates-ku WebSocket or SSE incorporate pannunga.\n3. **Resilient Architecture**: Offline caching and graceful fallbacks implement pannunga.\n4. **Automated Verification**: End-to-end integration tests add panni high reliability prove pannunga.\n\nIdhu unga Innovation & Novelty score-ah (20 marks) nalla elevate pannum!`;
       }
       return `To significantly elevate your project's innovation score:\n\n1. **Edge Intelligence / Predictive Features**: Incorporate predictive intelligence or automated classification rather than passive data displays.\n2. **Real-Time Responsiveness**: Implement WebSocket or Server-Sent Events (SSE) for live synchronization.\n3. **Robust Resiliency**: Add fault-tolerant fallback workflows (e.g. offline caching with IndexedDB, circuit breakers).\n4. **Granular Telemetry & Insights**: Provide automated trend analysis and recommendations based on user activity.\n5. **Rigorous Verification**: Integrate end-to-end automated testing to prove functional reliability.`;
+    }
+
+    // Generic project inquiry where evidence is missing (Case I)
+    if (
+      (q.includes('did i use in my project') || q.includes('model in my project') || q.includes('cnn in my project') || q.includes('architecture of my project') || (q.includes('my project') && !q.includes('improve') && !q.includes('score') && !q.includes('mark'))) &&
+      (!context || context.includes('No project evidence') || context.includes('No project evaluation records found'))
+    ) {
+      return "I don't have enough project evidence to answer that.";
+    }
+
+    // 12. Unknown Provalix Platform Inquiries
+    if (q.includes('provalix') && q.includes('confidential-internal-secret-xyz')) {
+      return 'I don\'t have that Provalix information available yet.';
     }
 
     if (q.includes('improve') || q.includes('suggestion') || q.includes('weakness')) {
@@ -535,6 +741,56 @@ export class MockAIProvider implements AIProvider {
       return `To improve your Provalix AI project score:\n1. Increase unit and integration test coverage to >= 80%.\n2. Ensure your GitHub repo has a clear setup guide and .env.example.\n3. Verify all core user journeys with live demo recordings.`;
     }
 
+    // 14. Programming & Academic Concept Handlers
+    // React (Case A & Multilingual)
+    if (
+      q.includes('what is react') ||
+      q === 'react' ||
+      q.includes('react js') ||
+      q.includes('react.js') ||
+      (q.includes('react') && !q.includes('reaction'))
+    ) {
+      if (isTamilScript) {
+        return `**React** என்பது பயனர் இடைமுகங்களை (User Interfaces - UI) உருவாக்குவதற்கான ஒரு பிரபலமான திறந்த மூல JavaScript நூலகமாகும் (Library). இது Meta (Facebook) நிறுவனத்தால் உருவாக்கப்பட்டது.\n\n### முக்கிய அம்சங்கள்:\n1. **Component-Based Architecture**: UI-ஐ மீண்டும் பயன்படுத்தக்கூடிய சிறு கூறுகளாகப் (components) பிரிக்கிறது.\n2. **Virtual DOM**: நிஜமான DOM-ஐ நேரடியாக மாற்றாமல், விரைவான மாற்றங்களை விர்ச்சுவல் DOM மூலம் திறமையாகக் கையாள்கிறது.\n3. **JSX**: JavaScript உடன் HTML வடிவிலான தொடரியலை (syntax) எழுத அனுமதிக்கிறது.\n4. **Unidirectional Data Flow**: தரவு ஒற்றை திசையில் (parent to child) பாய்வதால் பிழைகளை எளிதில் தீர்க்க முடிகிறது.`;
+      }
+      if (isTanglish) {
+        return `**React** na user interfaces (UI) build panna use aagura popular JavaScript library. Idhu Meta (Facebook) develop pannanga.\n\n### Main Features:\n1. **Component-Based**: UI-ah reusable components-ah split panni build பண்ணலாம்.\n2. **Virtual DOM**: Real DOM-ah direct-ah update pannama, memory-la changes calculate panni fast rendering tharum.\n3. **JSX Syntax**: JavaScript-kulla HTML-like syntax write panna allow pannum.\n4. **One-Way Data Binding**: Data flow single direction-la irukkum, so state debugging easy!`;
+      }
+      return `**React** is an open-source, component-based front-end JavaScript library developed and maintained by Meta for building dynamic and responsive user interfaces, primarily in single-page web applications (SPAs).\n\n### Core Architectural Foundations:\n1. **Component-Based Architecture**: Encapsulates state and logic into modular, reusable building blocks.\n2. **Virtual DOM (VDOM)**: Uses an in-memory tree representation to compute minimal diffs and optimize browser DOM updates.\n3. **Declarative UI (JSX)**: Allows writing declarative markup directly within JavaScript/TypeScript.\n4. **Unidirectional Data Flow**: State flows predictably downwards via props, making tracking and debugging straightforward.`;
+    }
+
+    // Binary Search (Algorithm & Programming)
+    if (q.includes('binary search')) {
+      if (isTamilScript) {
+        return `**Binary Search (இருகூறு தேடல்)** என்பது வரிசைப்படுத்தப்பட்ட தரவுத் தொகுப்பில் (sorted array) ஒரு குறிப்பிட்ட உருப்படியை தேடுவதற்கான திறமையான வழிமுறையாகும். இதன் காலச் சிக்கல் (Time Complexity) **O(log n)** ஆகும்.\n\n### செயல்படும் விதம்:\n1. நடுவில் உள்ள உறுப்பை (middle element) இலக்கு மதிப்புடன் ஒப்பிடுகிறது.\n2. இலக்கு சமமாக இருந்தால் தேடல் முடிவடைகிறது.\n3. இலக்கு சிறியதாக இருந்தால் இடது பாதியிலும், பெரியதாக இருந்தால் வலது பாதியிலும் தேடல் தொடர்கிறது.`;
+      }
+      if (isTanglish) {
+        return `**Binary Search** na sorted array-la oru element-ah search panna use aagura efficient divide-and-conquer algorithm. Idhoda time complexity **O(log n)**.\n\n### Working Principle:\n1. Array-oda middle element-ah target element-oda compare pannum.\n2. Match aana immediate-ah result return pannum.\n3. Target chinna value-na left half, periya value-na right half divide panni search repeat pannum.`;
+      }
+      return `**Binary Search** is an efficient divide-and-conquer search algorithm with **O(log n)** time complexity that operates on sorted collections by repeatedly dividing the search space in half.\n\n### Operational Principles:\n1. Compare the target value to the middle element of the sorted array.\n2. If values match, return the index.\n3. If target is smaller than the middle element, discard the upper half and recurse on the lower half.\n4. If target is larger, discard the lower half and recurse on the upper half.\n5. Continues until found or the interval is empty.`;
+    }
+
+    // Python Decorators (Case C)
+    if (q.includes('decorator') || q.includes('decorators') || (q.includes('python') && q.includes('decorator'))) {
+      if (isTamilScript) {
+        return `**Python Decorators (அலங்கரிப்பாளர்கள்)** என்பது ஒரு சார்பின் (function) மூலக் குறியீட்டை மாற்றாமல் அதன் செயல்பாட்டை விரிவுபடுத்த உதவும் ஒரு சக்திவாய்ந்த நிரலாக்க நுட்பமாகும். இது Higher-Order Function தத்துவத்தை அடிப்படையாகக் கொண்டது.\n\n### Python Decorator Example:\n\`\`\`python\ndef logger(func):\n    def wrapper(*args, **kwargs):\n        print(f"Calling function: {func.__name__}")\n        result = func(*args, **kwargs)\n        print(f"Finished executing: {func.__name__}")\n        return result\n    return wrapper\n\n@logger\ndef greet(name):\n    return f"Hello, {name}!"\n\nprint(greet("Provalix"))\n\`\`\`\n\n### விளக்கம்:\n- \`@logger\` தொடரியல் \`greet = logger(greet)\` என்பதற்குச் சமமானது.\n- Logging, authentication, timing, மற்றும் caching போன்றவற்றிற்கு decorators பரவலாகப் பயன்படுகின்றன.`;
+      }
+      if (isTanglish) {
+        return `**Python Decorators** na oru function-oda actual code-ah modify pannama, adhodha behavior-ah extend panna use aagura feature. Idhu function-ah argument-ah eduthu pudhu function return pannum.\n\n### Python Decorator Example:\n\`\`\`python\ndef logger(func):\n    def wrapper(*args, **kwargs):\n        print(f"Calling function: {func.__name__}")\n        result = func(*args, **kwargs)\n        print(f"Completed {func.__name__}")\n        return result\n    return wrapper\n\n@logger\ndef greet(name):\n    return f"Hello, {name}!"\n\nprint(greet("Provalix"))\n\`\`\`\n\n\`@logger\` syntax use panni function mela apply pannalam. Logging, access control, and execution timing calculate panna decorators romba useful!`;
+      }
+      return `In Python, a **decorator** is a design pattern and language feature that allows you to dynamically extend or modify the behavior of a function or method without altering its original source code. Decorators are implemented as higher-order functions that take a function as an argument and return a modified wrapper.\n\n### Practical Code Example:\n\`\`\`python\nimport time\nfrom functools import wraps\n\ndef execution_timer(func):\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        start_time = time.perf_counter()\n        result = func(*args, **kwargs)\n        duration = time.perf_counter() - start_time\n        print(f"[{func.__name__}] finished in {duration:.4f}s")\n        return result\n    return wrapper\n\n@execution_timer\ndef calculate_factorial(n: int) -> int:\n    result = 1\n    for i in range(1, n + 1):\n        result *= i\n    return result\n\nprint(calculate_factorial(10))\n\`\`\`\n\n### Key Concepts:\n- **Syntactic Sugar**: \`@execution_timer\` is equivalent to \`calculate_factorial = execution_timer(calculate_factorial)\`.\n- **Common Use Cases**: Request authentication, runtime metrics, caching/memoization, and input validation.`;
+    }
+
+    // TCP (Case F)
+    if (q.includes('what is tcp') || q === 'tcp' || q.includes('explain tcp') || (q.includes('tcp') && (q.includes('protocol') || q.includes('network') || q.includes('ip') || q.includes('na enna') || q.includes('solla') || q.includes('sollu')))) {
+      if (isTamilScript) {
+        return `**TCP (Transmission Control Protocol / பரிமாற்றக் கட்டுப்பாட்டு நெறிமுறை)** என்பது கணினி நெட்வொர்க்கிங்கில் போக்குவரத்து அடுக்கில் (Transport Layer) செயல்படும் ஒரு முதன்மையான நெறிமுறையாகும்.\n\n### முக்கிய சிறப்பம்சங்கள்:\n1. **Connection-Oriented**: தரவு பரிமாற்றத்திற்கு முன் மூன்று வழி கைகுலுக்கல் (3-Way Handshake: SYN -> SYN-ACK -> ACK) மூலம் இணைப்பை உருவாக்குகிறது.\n2. **Reliable Delivery**: பாக்கெட்டுகள் (packets) தொலைந்தால் அவற்றை மீண்டும் அனுப்புகிறது (Retransmission).\n3. **In-Order Delivery**: பாக்கெட்டுகள் சரியான வரிசையில் பெறுநரை அடைவதை உறுதி செய்கிறது.\n4. **Flow & Congestion Control**: நெட்வொர்க் பணிச்சுமையை நிர்வகிக்க sliding window மற்றும் congestion avoidance நுட்பங்களைப் பயன்படுத்துகிறது.`;
+      }
+      if (isTanglish) {
+        return `**TCP (Transmission Control Protocol)** na Computer Networking-la Transport Layer-la operate aagura connection-oriented, reliable protocol.\n\n### Core Features:\n1. **Connection-Oriented**: Data transfer start panradhuku munnadi 3-Way Handshake (SYN -> SYN-ACK -> ACK) establish pannum.\n2. **Reliable Delivery**: Packet loss aana thirumba resend (retransmit) pannum. Data delivery 100% guarantee!\n3. **In-Order Sequencing**: Sent data sequence number vachu ordered-ah receiver-kku assemble aagum.\n4. **Flow & Congestion Control**: Network congestion and buffer overflow handle panna sliding window mechanism use pannum.`;
+      }
+      return `**TCP (Transmission Control Protocol)** is a fundamental connection-oriented transport layer protocol in the TCP/IP suite that provides reliable, ordered, and error-checked transmission of data streams between network hosts.\n\n### Primary Features:\n1. **Connection-Oriented (Three-Way Handshake)**: Establishes a verified connection via \`SYN\` -> \`SYN-ACK\` -> \`ACK\` before transmitting application data.\n2. **Reliable Delivery & Retransmission**: Uses sequence numbers, positive acknowledgments (ACKs), and timeouts to guarantee delivery and re-send dropped packets.\n3. **In-Order Assembly**: Segments arriving out of order are re-sequenced at the destination buffer.\n4. **Flow & Congestion Control**: Employs sliding-window flow control to prevent buffer overruns and congestion-avoidance algorithms (e.g. CUBIC, Reno) to optimize throughput.`;
+    }
 
     // 9. Technical & Academic Questions (Normalization, DBMS, Recursion, Palindrome, Overfitting, etc.)
     if (q.includes('normalization') || q.includes('normal form')) {
@@ -612,8 +868,12 @@ export class MockAIProvider implements AIProvider {
       return `**Cloud Computing** is the on-demand delivery of IT resources—including compute power, storage, and databases—over the internet with pay-as-you-go pricing.\n\n### Service Models:\n1. **IaaS (Infrastructure as a Service)**: Virtual machines, raw networking, storage (e.g. AWS EC2, GCP Compute Engine).\n2. **PaaS (Platform as a Service)**: Managed runtime environments for deploying applications without managing OS/servers (e.g. AWS Elastic Beanstalk, Heroku, Vercel).\n3. **SaaS (Software as a Service)**: End-user software delivered over the web (e.g. Google Workspace, Microsoft 365).\n\n### Deployment Models:\n- **Public Cloud**, **Private Cloud**, and **Hybrid / Multi-Cloud**.`;
     }
 
-    // 10. Generic / Context-Aware response
-    if (context && context.length > 30) {
+    // 10. Generic / Context-Aware response - ONLY when query is genuinely about project or platform evaluation
+    if (
+      context &&
+      context.length > 30 &&
+      (q.includes('project') || q.includes('evaluation') || q.includes('rubric') || q.includes('score') || q.includes('criteria') || q.includes('feedback') || q.includes('report') || q.includes('status'))
+    ) {
       if (isTamilScript) {
         return `உங்கள் திட்டப்பணி வினவலுக்கான பொருத்தமான வழிகாட்டுதல் விவரங்கள் கீழே கொடுக்கப்பட்டுள்ளன:\n\n${context}\n\nமேலும் ஏதேனும் அளவுகோல் அல்லது மேம்பாட்டு வழிகாட்டுதல்கள் தேவைப்பட்டால் கேட்கவும்!`;
       }
@@ -622,6 +882,7 @@ export class MockAIProvider implements AIProvider {
       }
       return `Here is the relevant Provalix AI guidance matching your query:\n\n${context}\n\nLet me know if you need specific details on any rubric or improvement step!`;
     }
+
 
     if (isTamilScript) {
       return `வணக்கம்! நான் உங்கள் Provalix AI Assistant. திட்ட மதிப்பீட்டு மதிப்பெண்கள், அளவுகோல் விவரங்கள் (rubrics), Viva வழிகாட்டுதல்கள், அல்லது நிரலாக்க மற்றும் தொழில்நுட்ப சந்தேகங்களை தமிழில் விளக்க தயாராக உள்ளேன். நீங்கள் அறிய விரும்பும் தலைப்பைக் குறிப்பிடுங்கள்.`;

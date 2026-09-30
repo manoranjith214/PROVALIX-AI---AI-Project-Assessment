@@ -1,8 +1,21 @@
+export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_EVIDENCE';
+
 export interface CriteriaScore {
   name: string;
   maxScore: number;
   obtainedScore: number;
   feedback: string;
+  confidence?: ConfidenceLevel;
+  evidence?: string[];
+}
+
+export interface CriterionEvaluationDetail {
+  name: string;
+  score: number;
+  maxScore: number;
+  justification: string;
+  evidence: string[];
+  confidence: ConfidenceLevel;
 }
 
 export interface ImprovementItem {
@@ -12,7 +25,8 @@ export interface ImprovementItem {
 }
 
 export interface ProjectCheckerEvaluationResult {
-  overallScore: number; // Max 100
+  overallScore: number; // Max 100, strictly computed as sum of criteria
+  maxScore?: number;
   criteria: {
     problemDefinition: CriteriaScore; // Max 15
     innovationNovelty: CriteriaScore; // Max 20
@@ -22,6 +36,11 @@ export interface ProjectCheckerEvaluationResult {
     documentation: CriteriaScore; // Max 10
     overallQuality: CriteriaScore; // Max 10
   };
+  criteriaList?: CriterionEvaluationDetail[];
+  verifiedClaims: string[];
+  unverifiedClaims: string[];
+  missingEvidence: string[];
+  inconsistencies: string[];
   strengths: string[];
   weaknesses: string[];
   technicalAnalysis: string;
@@ -31,10 +50,12 @@ export interface ProjectCheckerEvaluationResult {
   improvementPlan: ImprovementItem[];
   summary: string;
   aiModel: string;
+  confidence?: ConfidenceLevel;
 }
 
 export interface ClassroomAIEvaluationResult {
-  rawScore: number; // Max 50
+  rawScore: number; // Max 50, strictly computed as sum of criteria
+  maxScore?: number;
   codeSimilarity: number;
   reportSimilarity: number;
   overallSimilarity: number;
@@ -43,9 +64,15 @@ export interface ClassroomAIEvaluationResult {
   plagiarismStatus: 'Low' | 'Moderate' | 'High';
   plagiarismReason?: string;
   matchedSources?: string[];
+  criteriaList?: CriterionEvaluationDetail[];
+  verifiedClaims?: string[];
+  unverifiedClaims?: string[];
+  missingEvidence?: string[];
+  inconsistencies?: string[];
   feedback: string;
   improvementPlan: ImprovementItem[];
   isDemoData: boolean;
+  confidence?: ConfidenceLevel;
 }
 
 export type VivaCategory =
@@ -63,8 +90,8 @@ export interface GeneratedVivaQuestion {
 }
 
 export interface AIProvider {
-  evaluateProject(projectData: any, plagiarismData?: any): Promise<ProjectCheckerEvaluationResult>;
-  evaluateClassroomSubmission(submissionData: any, plagiarismData?: any): Promise<ClassroomAIEvaluationResult>;
+  evaluateProject(projectData: any, plagiarismData?: any, evidenceData?: any): Promise<ProjectCheckerEvaluationResult>;
+  evaluateClassroomSubmission(submissionData: any, plagiarismData?: any, evidenceData?: any): Promise<ClassroomAIEvaluationResult>;
   generateFeedback(context: string, score: number): Promise<string>;
   generateImprovementPlan(weaknesses: string[]): Promise<ImprovementItem[]>;
   generateResponse(

@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { chatbotService, ConversationSummary, ChatSource } from '../services/chatbotService';
+import { supabase } from '../lib/supabase';
+import { tokenStorage } from '../services/api/tokenStorage';
 import { useAuth } from './AuthContext';
 
 export interface AIMessage {
@@ -242,26 +244,80 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
   };
 
-  const sendMessage = async (text: string) => {
-    if (!text.trim()) return;
+  const isSubmittingRef = useRef<boolean>(false);
+
+  const sendMessage = async (text: string, isRetry = false) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // Prevent double submission, duplicate API calls, and re-entrant events
+    if (isSubmittingRef.current || isLoading) {
+      console.warn('[AIContext] Blocked duplicate message submission attempt:', trimmed);
+      return;
+    }
+
+    isSubmittingRef.current = true;
+    setIsLoading(true);
     setError(null);
-    setLastUserPrompt(text);
+    setLastUserPrompt(trimmed);
+
+    // Verify currently authenticated session/token before making API call
+    try {
+      let { data: { session } } = await supabase.auth.getSession();
+      if (session && session.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+        try {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          if (refreshed?.session) {
+            session = refreshed.session;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      const token = session?.access_token || tokenStorage.getAccessToken();
+      if (!token) {
+        setError('Your session has expired. Please sign in again.');
+        setIsLoading(false);
+        isSubmittingRef.current = false;
+        return;
+      }
+    } catch {
+      const token = tokenStorage.getAccessToken();
+      if (!token) {
+        setError('Your session has expired. Please sign in again.');
+        setIsLoading(false);
+        isSubmittingRef.current = false;
+        return;
+      }
+    }
 
     const userMsg: AIMessage = {
-      id: `usr_${Date.now()}`,
+      id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       sender: 'user',
-      text,
+      text: trimmed,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    setMessages(prev => [...prev, userMsg]);
-    setIsLoading(true);
+
+    // Prevent duplicate user messages from ever being appended twice (especially on retry)
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.sender === 'user' && last.text === trimmed) {
+        return prev;
+      }
+      return [...prev, userMsg];
+    });
 
     try {
       const res = await chatbotService.sendMessage({
-        message: text,
+        message: trimmed,
         conversationId: conversationId || undefined,
         projectId: activeProjectId,
         submissionId: activeSubmissionId,
+        isRetry,
+        context: activeProjectId || activeSubmissionId ? {
+          projectId: activeProjectId,
+          classroomId: activeSubmissionId,
+        } : undefined,
       });
 
       if (res.conversationId) {
@@ -269,7 +325,7 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
 
       const aiMsg: AIMessage = {
-        id: `ai_${Date.now()}`,
+        id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         sender: 'ai',
         text: res.message,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -280,27 +336,53 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setMessages(prev => [...prev, aiMsg]);
       loadHistory();
     } catch (err: any) {
-      console.warn('AI assistant call failed:', err);
-      const config = CONTEXT_SUGGESTIONS[currentCategory] || CONTEXT_SUGGESTIONS.dashboard;
-      let fallbackText = config?.defaultResponse || "I've analyzed your question based on evaluation rubrics.";
-      if (err.message) {
-        setError(err.message);
+      console.error('AI assistant call failed:', err);
+      let errorMessage = 'AI service encountered a server error.';
+      const status = err?.status || err?.response?.status;
+      const lowerMsg = (err?.message || '').toLowerCase();
+
+      if (
+        lowerMsg.includes('quota') ||
+        lowerMsg.includes('resource_exhausted') ||
+        lowerMsg.includes('rate_limit_exceeded') && lowerMsg.includes('quota')
+      ) {
+        errorMessage = 'AI provider quota is currently unavailable.';
+      } else if (
+        status === 0 ||
+        lowerMsg.includes('unable to connect') ||
+        lowerMsg.includes('network') ||
+        lowerMsg.includes('failed to fetch') ||
+        lowerMsg.includes('econnrefused')
+      ) {
+        errorMessage = 'Unable to reach the AI service.';
+      } else if (
+        status === 401 ||
+        lowerMsg.includes('session has expired') ||
+        lowerMsg.includes('sign in') ||
+        lowerMsg.includes('auth_required') ||
+        lowerMsg.includes('unauthorized')
+      ) {
+        errorMessage = 'Your session has expired. Please sign in again.';
+      } else if (status === 403) {
+        errorMessage = 'You do not have permission to access this resource.';
+      } else if (status === 429) {
+        errorMessage = 'AI request limit reached. Please try again later.';
+      } else if (status >= 500) {
+        errorMessage = 'AI service encountered a server error.';
+      } else if (err?.message) {
+        errorMessage = err.message;
       }
-      const aiMsg: AIMessage = {
-        id: `ai_${Date.now()}`,
-        sender: 'ai',
-        text: fallbackText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setMessages(prev => [...prev, aiMsg]);
+
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
   const retryLastMessage = async () => {
-    if (lastUserPrompt && !isLoading) {
-      await sendMessage(lastUserPrompt);
+    if (lastUserPrompt && !isLoading && !isSubmittingRef.current) {
+      await sendMessage(lastUserPrompt, true);
     }
   };
 

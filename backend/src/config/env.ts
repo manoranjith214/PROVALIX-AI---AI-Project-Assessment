@@ -13,7 +13,12 @@ export const config = {
   
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY || '',
+    publishableKey:
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_KEY ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      '',
   },
   
   jwt: {
@@ -42,7 +47,7 @@ export const config = {
   ai: {
     provider: (process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'mock')).toLowerCase(),
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-lite-latest',
   },
 };
 

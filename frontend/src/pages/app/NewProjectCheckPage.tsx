@@ -11,6 +11,7 @@ import { projectService } from '../../services/projectService';
 import { projectCheckerService } from '../../services/projectCheckerService';
 import { projectReportService } from '../../services/projectReportService';
 import { StandaloneAIEvaluation, ProjectDetails } from '../../types';
+import { validateMeaningfulText, isValidGitHubUrl } from '../../utils/validationUtils';
 import { useToast } from '../../context/ToastContext';
 import { 
   FileCode, 
@@ -82,21 +83,25 @@ export const NewProjectCheckPage: React.FC = () => {
   // Evaluation results state
   const [generatedEvaluation, setGeneratedEvaluation] = useState<StandaloneAIEvaluation | null>(null);
 
-  const handleResourceToggle = (key: string, label: string) => {
-    setUploadedResources(prev => ({
-      ...prev,
-      [key]: {
-        uploaded: !prev[key].uploaded,
-        name: prev[key].uploaded ? '' : `${key}_artifact.zip`,
-        size: prev[key].uploaded ? '' : '12.4 MB',
-      }
-    }));
-    info(`Updated resource attachment for ${label}`);
-  };
-
   const triggerFileInput = (key: string) => {
     activeUploadCategory.current = key;
     fileInputRef.current?.click();
+  };
+
+  const handleResourceToggle = (key: string, label: string) => {
+    setUploadedResources(prev => {
+      const isCurrentlyUploaded = prev[key]?.uploaded;
+      if (isCurrentlyUploaded) {
+        info(`Removed resource attachment for ${label}`);
+        return {
+          ...prev,
+          [key]: { uploaded: false, name: '', size: '' }
+        };
+      } else {
+        triggerFileInput(key);
+        return prev;
+      }
+    });
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,30 +149,68 @@ export const NewProjectCheckPage: React.FC = () => {
   };
 
   const handleProceedToUpload = async () => {
-    if (!formData.title.trim()) {
-      error('Project Title is required.');
+    const titleVal = validateMeaningfulText(formData.title, 5, 'Project Title');
+    if (!titleVal.isValid) {
+      error(titleVal.error || 'Please provide a valid project title.');
       return;
+    }
+
+    const categoryVal = validateMeaningfulText(formData.category, 3, 'Category / Domain');
+    if (!categoryVal.isValid) {
+      error(categoryVal.error || 'Please provide a valid project category.');
+      return;
+    }
+
+    const targetUsersVal = validateMeaningfulText(formData.targetUsers, 5, 'Target Users');
+    if (!targetUsersVal.isValid) {
+      error(targetUsersVal.error || 'Please provide a valid target users definition.');
+      return;
+    }
+
+    const descVal = validateMeaningfulText(formData.description, 30, 'Description / Abstract');
+    if (!descVal.isValid) {
+      error(descVal.error || 'Please provide a meaningful description of at least 30 characters.');
+      return;
+    }
+
+    const problemVal = validateMeaningfulText(formData.problemStatement, 30, 'Problem Statement');
+    if (!problemVal.isValid) {
+      error(problemVal.error || 'Please provide a meaningful problem statement of at least 30 characters.');
+      return;
+    }
+
+    const solutionVal = validateMeaningfulText(formData.proposedSolution, 30, 'Proposed Solution');
+    if (!solutionVal.isValid) {
+      error(solutionVal.error || 'Please provide a meaningful proposed solution of at least 30 characters.');
+      return;
+    }
+
+    if (formData.githubUrl && formData.githubUrl.trim()) {
+      if (!isValidGitHubUrl(formData.githubUrl)) {
+        error('Please provide a valid GitHub repository URL (e.g. https://github.com/owner/repo)');
+        return;
+      }
     }
 
     setIsCreatingProject(true);
     try {
       const payload = {
-        title: formData.title,
-        category: formData.category,
-        description: formData.description,
-        problemStatement: formData.problemStatement,
-        proposedSolution: formData.proposedSolution,
-        objectives: formData.objectives,
-        innovation: formData.innovation,
-        features: formData.features,
-        targetUsers: formData.targetUsers,
+        title: formData.title.trim(),
+        category: formData.category.trim(),
+        description: formData.description.trim(),
+        problemStatement: formData.problemStatement.trim(),
+        proposedSolution: formData.proposedSolution.trim(),
+        objectives: formData.objectives.trim(),
+        innovation: formData.innovation.trim(),
+        features: formData.features.trim(),
+        targetUsers: formData.targetUsers.trim(),
         technologies: formData.technologies ? formData.technologies.split(',').map(s => s.trim()).filter(Boolean) : [],
         programmingLanguages: formData.programmingLanguages ? formData.programmingLanguages.split(',').map(s => s.trim()).filter(Boolean) : [],
-        testingApproach: formData.testingApproach,
-        limitations: formData.limitations,
-        futureEnhancements: formData.futureEnhancements,
-        githubUrl: formData.githubUrl || undefined,
-        liveDemoUrl: formData.liveDemoUrl || undefined,
+        testingApproach: formData.testingApproach.trim(),
+        limitations: formData.limitations.trim(),
+        futureEnhancements: formData.futureEnhancements.trim(),
+        githubUrl: formData.githubUrl.trim() || undefined,
+        liveDemoUrl: formData.liveDemoUrl.trim() || undefined,
       };
 
       if (!backendProjectId) {
@@ -186,109 +229,16 @@ export const NewProjectCheckPage: React.FC = () => {
     }
   };
 
-  const runSimulationFallback = () => {
-    setTimeout(() => {
-      setScanProgress(45);
-      setScanStage('Scanning Technical Project Report and cross-referencing academic archives...');
-    }, 1000);
-
-    setTimeout(() => {
-      setScanProgress(75);
-      setScanStage('Executing Multi-Criteria Rubric Scoring across 7 criteria...');
-    }, 2000);
-
-    setTimeout(() => {
-      setScanProgress(100);
-      const projectTitle = formData.title || 'Untitled Project';
-      const evalResult: StandaloneAIEvaluation = {
-        id: `eval_stand_${Date.now().toString().slice(-6)}`,
-        projectId: backendProjectId || `proj_${Date.now().toString().slice(-6)}`,
-        overallScore: 88,
-        criteria: {
-          problemDefinition: {
-            name: 'Problem Definition',
-            maxScore: 15,
-            obtainedScore: 13,
-            feedback: `Clear articulation of problem statement for ${projectTitle}.`
-          },
-          innovationNovelty: {
-            name: 'Innovation & Novelty',
-            maxScore: 20,
-            obtainedScore: 17,
-            feedback: 'Solid domain-specific innovation and architectural feasibility.'
-          },
-          technicalImplementation: {
-            name: 'Technical Implementation',
-            maxScore: 20,
-            obtainedScore: 18,
-            feedback: 'Comprehensive technology stack selection and modular design.'
-          },
-          functionality: {
-            name: 'Functionality',
-            maxScore: 15,
-            obtainedScore: 13,
-            feedback: 'Functional requirements well structured with achievable milestones.'
-          },
-          codeQuality: {
-            name: 'Code Quality',
-            maxScore: 10,
-            obtainedScore: 9,
-            feedback: 'Well-structured codebase architecture with clear separation of concerns.'
-          },
-          documentation: {
-            name: 'Documentation',
-            maxScore: 10,
-            obtainedScore: 9,
-            feedback: 'Detailed project abstract, technical specs, and verification strategy.'
-          },
-          overallQuality: {
-            name: 'Overall Project Quality',
-            maxScore: 10,
-            obtainedScore: 9,
-            feedback: 'Rigorous engineering foundation and practical real-world utility.'
-          }
-        },
-        plagiarism: {
-          codeSimilarity: 4,
-          reportSimilarity: 6,
-          overallSimilarity: 5,
-          status: 'Low',
-          isDemoData: false,
-        },
-        strengths: [
-          'Well-defined technical problem statement and targeted user demographic.',
-          'Modular architecture with modern technology stack integration.',
-          'Rigorous validation strategy and testing coverage.'
-        ],
-        weaknesses: [
-          'Edge case handling under non-standard network latency could be expanded.',
-          'Automated regression testing benchmarks should be formalized.'
-        ],
-        technicalAnalysis: `Technical evaluation of ${projectTitle} confirms clean architectural decoupling, modern framework usage, and scalable design patterns.`,
-        codeAnalysis: 'Clean component structure, strong typing practices, and standard error boundary implementations.',
-        documentationAnalysis: 'Documentation provides clear objectives, architecture overview, and deployment parameters.',
-        actionableSuggestions: [
-          'Implement comprehensive end-to-end integration tests for critical paths.',
-          'Enhance automated CI/CD deployment pipelines with linting and audit gates.',
-          'Add telemetry and structured error logging for operational observability.'
-        ],
-        improvementPlan: [
-          { area: 'Testing Automation', suggestion: 'Implement automated CI/CD test suites across edge and unit modules.', priority: 'High' },
-          { area: 'Operational Monitoring', suggestion: 'Add performance telemetry and error reporting hooks.', priority: 'Medium' },
-          { area: 'Documentation', suggestion: 'Expand API endpoint documentation and architectural diagrams.', priority: 'Low' }
-        ],
-        summary: `${projectTitle} exhibits strong design principles and practical execution viability. Plagiarism metrics are well within safe thresholds.`,
-        evaluatedAt: new Date().toISOString(),
-        isDemoData: false,
-      };
-
-      setGeneratedEvaluation(evalResult);
-      setCurrentStep(4);
-      success('AI Evaluation & Plagiarism analysis completed successfully!');
-    }, 3000);
-  };
-
   const startEvaluationScan = async () => {
+    // Evidence Gate (Requirement 3): Require at least one verified source-code evidence source
+    const hasSourceArchive = Boolean(uploadedResources.sourceCode?.uploaded && uploadedResources.sourceCode?.name);
+    const hasGithub = isValidGitHubUrl(formData.githubUrl);
+
+    if (!hasSourceArchive && !hasGithub) {
+      error('Evidence Gate: At least one source-code evidence source is required (uploaded source code archive or valid GitHub repository).');
+      return;
+    }
+
     setCurrentStep(3);
     setScanProgress(15);
     setScanStage('Parsing AST & Scanning Source Code for syntax and licensing...');
@@ -313,20 +263,37 @@ export const NewProjectCheckPage: React.FC = () => {
         setCurrentStep(4);
         success('AI Evaluation & Plagiarism analysis completed successfully!');
       } else {
-        runSimulationFallback();
+        throw new Error('Project must be saved to database before evaluation.');
       }
-    } catch {
-      runSimulationFallback();
+    } catch (err: any) {
+      setCurrentStep(2);
+      setScanProgress(0);
+      error(err?.message || 'AI evaluation service is currently unavailable. Please try again.');
     }
   };
 
   const handleSaveAndGenerateReport = async () => {
+    if (!generatedEvaluation || typeof generatedEvaluation.overallScore !== 'number') {
+      error('No valid AI evaluation score available to save.');
+      return;
+    }
+
     setIsSavingReport(true);
     try {
       const title = formData.title.trim() || 'Untitled Project';
       const category = formData.category || 'General Computing & AI';
-      const score = generatedEvaluation?.overallScore ?? 88;
-      const similarity = generatedEvaluation?.plagiarism?.overallSimilarity ?? 5;
+      const score = generatedEvaluation.overallScore;
+      const similarity = generatedEvaluation.plagiarism?.overallSimilarity ?? 0;
+
+      const attachedResources = Object.entries(uploadedResources)
+        .filter(([_, r]) => r.uploaded && r.name)
+        .map(([type, r]) => ({
+          type,
+          name: r.name,
+          size: r.size || '1.0 MB',
+          uploadedAt: new Date().toISOString(),
+          status: 'uploaded',
+        }));
 
       const reportPayload = {
         project_title: title,
@@ -352,10 +319,7 @@ export const NewProjectCheckPage: React.FC = () => {
             futureEnhancements: formData.futureEnhancements,
             githubUrl: formData.githubUrl,
             liveDemoUrl: formData.liveDemoUrl,
-            resources: [
-              { type: 'sourceCode', name: uploadedResources.sourceCode.name || 'code.zip', size: '24.1 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-              { type: 'projectReport', name: uploadedResources.projectReport.name || 'report.pdf', size: '6.4 MB', uploadedAt: new Date().toISOString(), status: 'uploaded' },
-            ],
+            resources: attachedResources,
             status: 'Evaluated',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),

@@ -60,6 +60,49 @@ export class SubmissionService {
       await classroomRepository.addMember(classroomId, submitterId, 'MEMBER');
     }
 
+    // Validate Classroom Resource Configuration requirements
+    if (classroom.resourcesConfig) {
+      try {
+        const parsed = JSON.parse(classroom.resourcesConfig);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const requiredResources = parsed.filter((r: any) => r.required);
+          const submittedResources = Array.isArray(data.resources) ? data.resources : [];
+          const missing: string[] = [];
+
+          for (const req of requiredResources) {
+            const reqType = (req.type || '').toLowerCase();
+            if (reqType === 'github') {
+              const hasGithub = Boolean(data.githubUrl && data.githubUrl.trim().length > 10);
+              const hasGithubResource = submittedResources.some((r: any) => (r.type || '').toLowerCase() === 'github');
+              if (!hasGithub && !hasGithubResource) {
+                missing.push(req.label || 'GitHub Repository');
+              }
+            } else {
+              const hasResource = submittedResources.some(
+                (r: any) => (r.type || '').toLowerCase() === reqType
+              );
+              if (!hasResource) {
+                missing.push(req.label || req.type);
+              }
+            }
+          }
+
+          if (missing.length > 0) {
+            const appErr: any = new AppError(
+              `Submission blocked: Missing required evidence resources: ${missing.join(', ')}`,
+              400
+            );
+            appErr.status = 'BLOCKED_MISSING_EVIDENCE';
+            appErr.missingResources = missing;
+            throw appErr;
+          }
+        }
+      } catch (jsonErr: any) {
+        if (jsonErr.status === 'BLOCKED_MISSING_EVIDENCE') {
+          throw jsonErr;
+        }
+      }
+    }
     const submission = await submissionRepository.create({
       classroomId,
       submitterId,
