@@ -26,10 +26,10 @@ export class AIService {
   private sanitizeErrorLog(message: string): string {
     if (!message) return 'Unknown provider error';
     return message
-      .replace(/key=[a-zA-Z0-9_\-\.]+/gi, 'key=[REDACTED]')
-      .replace(/apiKey=[a-zA-Z0-9_\-\.]+/gi, 'apiKey=[REDACTED]')
-      .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, 'Bearer [REDACTED]')
-      .replace(/AQ\.[a-zA-Z0-9_\-]+/gi, '[REDACTED_API_KEY]');
+      .replace(/key=[a-zA-Z0-9_.-]+/gi, 'key=[REDACTED]')
+      .replace(/apiKey=[a-zA-Z0-9_.-]+/gi, 'apiKey=[REDACTED]')
+      .replace(/Bearer\s+[a-zA-Z0-9_.-]+/gi, 'Bearer [REDACTED]')
+      .replace(/AQ\.[a-zA-Z0-9_-]+/gi, '[REDACTED_API_KEY]');
   }
 
   /**

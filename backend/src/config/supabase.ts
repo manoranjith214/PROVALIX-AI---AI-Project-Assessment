@@ -30,13 +30,18 @@ export async function verifySupabaseToken(token: string) {
   if (config.supabase.url && config.supabase.publishableKey) {
     try {
       const endpoint = `${config.supabase.url.replace(/\/+$/, '')}/auth/v1/user`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(endpoint, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,
           apikey: config.supabase.publishableKey,
+          Connection: 'close',
         },
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const user = await res.json();
         if (user?.id) return user;
