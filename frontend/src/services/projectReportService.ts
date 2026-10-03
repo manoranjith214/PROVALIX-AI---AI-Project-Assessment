@@ -41,6 +41,18 @@ export interface CreateReportInput {
   report_data?: any;
 }
 
+async function getAuthenticatedUser() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) {
+    return session.user;
+  }
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    return null;
+  }
+  return user;
+}
+
 export const projectReportService = {
   /**
    * Fetches project reports strictly for the current authenticated Supabase user.
@@ -55,11 +67,11 @@ export const projectReportService = {
       sortBy = 'newest',
     } = options;
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const user = await getAuthenticatedUser();
 
-    if (userError || !user) {
-      console.error('[projectReportService] Auth check failed or no user logged in:', userError);
-      throw new Error(userError?.message || 'Authentication required to view project reports.');
+    if (!user) {
+      console.error('[projectReportService] Auth check failed or no user logged in');
+      throw new Error('Authentication required to view project reports.');
     }
 
     try {
@@ -126,10 +138,10 @@ export const projectReportService = {
    * Fetches a single project report by ID for the authenticated user.
    */
   async getReportById(id: string): Promise<SupabaseProjectReportRow | null> {
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const user = await getAuthenticatedUser();
 
-    if (userError || !user) {
-      console.error('[projectReportService] Auth check failed for getReportById:', userError);
+    if (!user) {
+      console.error('[projectReportService] Auth check failed for getReportById');
       throw new Error('Authentication required.');
     }
 
@@ -153,10 +165,10 @@ export const projectReportService = {
    * linked to the authenticated user's ID.
    */
   async createReport(input: CreateReportInput): Promise<SupabaseProjectReportRow> {
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const user = await getAuthenticatedUser();
 
-    if (userError || !user) {
-      console.error('[projectReportService] Cannot save report - unauthenticated user:', userError);
+    if (!user) {
+      console.error('[projectReportService] Cannot save report - unauthenticated user');
       throw new Error('You must be logged in to save project reports.');
     }
 
@@ -190,9 +202,9 @@ export const projectReportService = {
    * Updates an existing report title or fields for the current user.
    */
   async updateReport(id: string, updates: Partial<CreateReportInput>): Promise<SupabaseProjectReportRow> {
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const user = await getAuthenticatedUser();
 
-    if (userError || !user) {
+    if (!user) {
       throw new Error('Authentication required.');
     }
 
@@ -227,9 +239,9 @@ export const projectReportService = {
    * Permanently deletes a report belonging to the current user.
    */
   async deleteReport(id: string): Promise<boolean> {
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const user = await getAuthenticatedUser();
 
-    if (userError || !user) {
+    if (!user) {
       throw new Error('Authentication required.');
     }
 

@@ -16,7 +16,7 @@ export class AIService {
   private getProvider(): { provider: AIProvider; providerName: string; modelName: string } {
     const provider = getAIProvider();
     const providerName = (config.ai.provider || 'gemini').toLowerCase();
-    const modelName = provider instanceof GeminiProvider ? provider.getModelName() : (config.ai.geminiModel || 'gemini-flash-lite-latest');
+    const modelName = provider instanceof GeminiProvider ? provider.getModelName() : (config.ai.geminiModel || 'gemini-3.8-flash');
     return { provider, providerName, modelName };
   }
 
@@ -83,20 +83,32 @@ export class AIService {
       const rawErrMsg = err?.message || String(err);
       const safeErrMsg = this.sanitizeErrorLog(rawErrMsg);
 
-      // Analyze error status and message
+      // Analyze error status and message according to Task 7 specification
       const errStr = safeErrMsg.toLowerCase();
       let statusCode = 500;
       let userFacingMessage = 'AI service temporarily unavailable. Please click Retry.';
 
       if (
+        err.statusCode === 404 ||
+        errStr.includes('404') ||
+        errStr.includes('not_found') ||
+        errStr.includes('no longer available') ||
+        errStr.includes('model not found') ||
+        errStr.includes('unsupported model')
+      ) {
+        // Gemini model unavailable / retired
+        statusCode = 500;
+        userFacingMessage = 'AI model configuration error. Please contact administrator.';
+      } else if (
         err.statusCode === 429 ||
         errStr.includes('429') ||
         errStr.includes('quota') ||
         errStr.includes('resource_exhausted') ||
         errStr.includes('rate limit')
       ) {
+        // Rate limit
         statusCode = 429;
-        userFacingMessage = 'AI rate limit exceeded. Please wait a moment before trying again.';
+        userFacingMessage = 'AI service rate limit reached. Please wait a moment before trying again.';
       } else if (
         err.statusCode === 401 ||
         err.statusCode === 403 ||
@@ -105,15 +117,29 @@ export class AIService {
         errStr.includes('api_key_invalid') ||
         errStr.includes('api key not valid') ||
         errStr.includes('unauthenticated') ||
-        errStr.includes('missing or not configured')
+        errStr.includes('missing or not configured') ||
+        errStr.includes('permission_denied')
       ) {
+        // Authentication / API key error
         statusCode = 401;
-        userFacingMessage = 'AI service authentication error. Please contact administrator.';
+        userFacingMessage = 'AI provider authentication failed. Please contact administrator.';
+      } else if (
+        err.statusCode === 503 ||
+        errStr.includes('503') ||
+        errStr.includes('unavailable') ||
+        errStr.includes('high demand') ||
+        errStr.includes('overloaded') ||
+        errStr.includes('timeout')
+      ) {
+        // Temporary provider error
+        statusCode = 503;
+        userFacingMessage = 'AI service temporarily unavailable. Please click Retry.';
       } else if (
         err.statusCode === 400 ||
         errStr.includes('400') ||
         errStr.includes('invalid_argument')
       ) {
+        // Invalid request argument
         statusCode = 400;
         userFacingMessage = 'Invalid AI request. Please try rephrasing your message.';
       } else if (err.statusCode && err.statusCode !== 500) {

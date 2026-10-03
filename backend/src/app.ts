@@ -32,6 +32,22 @@ export function createApp(): Express {
     app.use(morgan('dev'));
   }
 
+  // Performance Logging Middleware (Development only)
+  if (config.nodeEnv === 'development') {
+    app.use((req, res, next) => {
+      const start = Date.now();
+      res.on('finish', () => {
+        const duration = Date.now() - start;
+        if (duration > 150) {
+          console.warn(`[PERF WARNING] Slow Request: ${req.method} ${req.originalUrl} - ${duration}ms (status: ${res.statusCode})`);
+        } else {
+          console.log(`[PERF] ${req.method} ${req.originalUrl} - ${duration}ms (status: ${res.statusCode})`);
+        }
+      });
+      next();
+    });
+  }
+
   // Body Parsing Middleware
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));

@@ -16,7 +16,7 @@ export class GeminiProvider implements AIProvider {
 
   constructor(apiKey?: string, modelName?: string) {
     const key = apiKey || config.ai.geminiApiKey;
-    this.modelName = modelName || config.ai.geminiModel || 'gemini-flash-lite-latest';
+    this.modelName = modelName || config.ai.geminiModel || 'gemini-3.8-flash';
     this.fallbackProvider = new MockAIProvider();
 
     if (key && key.trim().length > 0) {
@@ -201,6 +201,48 @@ STRICT OPERATIONAL RULES:
     return 'english';
   }
 
+  private async generateJsonWithRetry(prompt: string, modelName: string = this.modelName): Promise<any> {
+    const executeCall = async (model: string) => {
+      return this.client!.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: { responseMimeType: 'application/json' },
+      });
+    };
+
+    let response;
+    try {
+      response = await executeCall(modelName);
+    } catch (firstErr: any) {
+      const errMsg = firstErr?.message || '';
+      const isRateLimit =
+        errMsg.includes('429') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('quota');
+      const isTransient =
+        errMsg.includes('503') ||
+        errMsg.includes('UNAVAILABLE') ||
+        errMsg.includes('high demand');
+
+      if (isRateLimit) {
+        console.warn('⚠️ [GeminiProvider]: Rate limit encountered in JSON eval, retrying after 2s backoff...');
+        await new Promise((r) => setTimeout(r, 2000));
+        response = await executeCall(modelName);
+      } else if (isTransient && modelName !== 'gemini-3.5-flash-lite') {
+        console.warn(`⚠️ [GeminiProvider]: Primary model ${modelName} unavailable, attempting backup model gemini-3.5-flash-lite...`);
+        response = await executeCall('gemini-3.5-flash-lite');
+      } else {
+        throw firstErr;
+      }
+    }
+
+    const text = response.text;
+    if (!text) {
+      throw new Error('AI provider returned empty evaluation response.');
+    }
+    return JSON.parse(text);
+  }
+
   async evaluateProject(projectData: any, plagiarismData?: any, evidenceData?: any): Promise<ProjectCheckerEvaluationResult> {
     if (!this.client) {
       if (config.ai.provider === 'gemini') {
@@ -253,18 +295,7 @@ ${JSON.stringify(evidenceData || {}, null, 2)}
 Plagiarism Data:
 ${JSON.stringify(plagiarismData || {}, null, 2)}`;
 
-      const res = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: 'application/json' },
-      });
-
-      const text = res.text;
-      if (!text) {
-        throw new Error('AI provider returned empty evaluation response.');
-      }
-
-      const parsed = JSON.parse(text);
+      const parsed = await this.generateJsonWithRetry(prompt);
       if (!Array.isArray(parsed.criteria) || parsed.criteria.length < 7) {
         throw new Error('AI provider returned malformed evaluation criteria.');
       }
@@ -400,18 +431,7 @@ ${JSON.stringify(submissionData, null, 2)}
 Evidence Data:
 ${JSON.stringify(evidenceData || {}, null, 2)}`;
 
-      const res = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: 'application/json' },
-      });
-
-      const text = res.text;
-      if (!text) {
-        throw new Error('AI provider returned empty classroom evaluation response.');
-      }
-
-      const parsed = JSON.parse(text);
+      const parsed = await this.generateJsonWithRetry(prompt);
       if (!Array.isArray(parsed.criteria) || parsed.criteria.length < 5) {
         throw new Error('AI provider returned malformed classroom evaluation criteria.');
       }

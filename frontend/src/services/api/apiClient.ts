@@ -35,17 +35,26 @@ export interface RequestOptions extends RequestInit {
   rawEnvelope?: boolean;
 }
 
-export async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+let cachedAccessToken: { token: string; expiresAt: number } | null = null;
+let pendingRefreshPromise: Promise<string | null> | null = null;
 
-  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+export function invalidateTokenCache() {
+  cachedAccessToken = null;
+}
 
-  const headers: Record<string, string> = {
-    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-    ...(options.headers as Record<string, string>),
-  };
+async function getOrRefreshAccessToken(): Promise<string | null> {
+  const now = Date.now();
+  // If we have a cached token valid for at least 30 more seconds, return immediately
+  if (cachedAccessToken && cachedAccessToken.expiresAt > now + 30000) {
+    return cachedAccessToken.token;
+  }
 
-  if (!headers['Authorization']) {
+  // Deduplicate concurrent session refresh attempts
+  if (pendingRefreshPromise) {
+    return pendingRefreshPromise;
+  }
+
+  pendingRefreshPromise = (async () => {
     try {
       let { data: { session } } = await supabase.auth.getSession();
       if (session && session.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
@@ -58,18 +67,44 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
           // ignore refresh error
         }
       }
+
       if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`;
+        const expiresAt = session.expires_at ? session.expires_at * 1000 : Date.now() + 3600000;
+        cachedAccessToken = { token: session.access_token, expiresAt };
         tokenStorage.setAccessToken(session.access_token);
+        return session.access_token;
       }
+
+      const localToken = tokenStorage.getAccessToken();
+      if (localToken) {
+        cachedAccessToken = { token: localToken, expiresAt: Date.now() + 60000 };
+        return localToken;
+      }
+      return null;
     } catch {
-      // ignore
+      return tokenStorage.getAccessToken();
+    } finally {
+      pendingRefreshPromise = null;
     }
-    if (!headers['Authorization']) {
-      const token = tokenStorage.getAccessToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+  })();
+
+  return pendingRefreshPromise;
+}
+
+export async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  const headers: Record<string, string> = {
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(options.headers as Record<string, string>),
+  };
+
+  if (!headers['Authorization']) {
+    const token = await getOrRefreshAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
   }
 

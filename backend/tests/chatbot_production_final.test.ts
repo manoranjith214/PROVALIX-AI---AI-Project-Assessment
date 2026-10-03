@@ -360,7 +360,7 @@ describe('PROVALIX AI ASSISTANT — 20 FINAL PRODUCTION CRITERIA TESTS', () => {
       },
     };
 
-    const gemini = new GeminiProvider('fake-key-for-test', 'gemini-2.5-flash');
+    const gemini = new GeminiProvider('fake-key-for-test', 'gemini-3.8-flash');
     (gemini as any).client = mockGeminiClient;
 
     // Call generateResponse directly on gemini instance with error

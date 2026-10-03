@@ -5,16 +5,29 @@ import { verifySupabaseToken } from '../config/supabase';
 import { userRepository } from '../repositories/userRepository';
 import { prisma } from '../config/prisma';
 
+// In-memory token cache to prevent repeated remote Supabase Auth network calls & DB lookups on every concurrent request
+interface CachedUserSession {
+  user: any;
+  cachedAt: number;
+}
+const tokenCache = new Map<string, CachedUserSession>();
+const TOKEN_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+// Background cleanup for stale cached tokens
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of tokenCache.entries()) {
+    if (now - value.cachedAt > TOKEN_CACHE_TTL_MS) {
+      tokenCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
 export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   const endpoint = `${req.method} ${req.originalUrl || req.url}`;
 
-  // Safe diagnostic log (NO passwords, tokens, secrets, or keys logged)
-  const hasBearer = Boolean(authHeader && authHeader.startsWith('Bearer '));
-  console.log(`[Auth] Request reached backend: ${endpoint} | Has Bearer: ${hasBearer}`);
-
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.log(`[Auth] Endpoint: ${endpoint} | Status: 401 Unauthorized (No token provided)`);
     return res.status(401).json({
       success: false,
       error: 'AUTH_REQUIRED',
@@ -24,7 +37,6 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
   const token = authHeader.split(' ')[1];
   if (!token || token === 'null' || token === 'undefined') {
-    console.log(`[Auth] Endpoint: ${endpoint} | Status: 401 Unauthorized (Invalid token parameter)`);
     return res.status(401).json({
       success: false,
       error: 'AUTH_REQUIRED',
@@ -37,11 +49,17 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     const payload = verifyAccessToken(token);
     if (payload && payload.id) {
       req.user = payload;
-      console.log(`[Auth] Endpoint: ${endpoint} | Authenticated: Yes (Local JWT) | Status: 200`);
       return next();
     }
   } catch {
     // Local JWT check failed or token is a Supabase JWT; proceed to Supabase verification
+  }
+
+  // 1.5 Fast-path: Check in-memory session cache (eliminates remote TLS handshake on concurrent requests)
+  const cached = tokenCache.get(token);
+  if (cached && Date.now() - cached.cachedAt < TOKEN_CACHE_TTL_MS) {
+    req.user = cached.user;
+    return next();
   }
 
   // 2. Verify with Supabase auth service
@@ -91,7 +109,15 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
           sbUser.email?.split('@')[0] ||
           'User',
       };
-      console.log(`[Auth] Endpoint: ${endpoint} | Authenticated: Yes (Supabase JWT) | Status: 200`);
+
+      // Cache verified session to accelerate parallel requests
+      tokenCache.set(token, { user: req.user, cachedAt: Date.now() });
+      if (tokenCache.size > 2000) {
+        // Prune oldest if cache grows large
+        const firstKey = tokenCache.keys().next().value;
+        if (firstKey) tokenCache.delete(firstKey);
+      }
+
       return next();
     }
   } catch (sbErr: any) {

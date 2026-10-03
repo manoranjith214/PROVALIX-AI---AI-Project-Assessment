@@ -47,7 +47,7 @@ export const config = {
   ai: {
     provider: (process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'mock')).toLowerCase(),
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-lite-latest',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   },
 };
 

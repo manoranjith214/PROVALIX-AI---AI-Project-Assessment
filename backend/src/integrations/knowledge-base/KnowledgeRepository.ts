@@ -1,6 +1,18 @@
 import { prisma } from '../../config/prisma';
 
+// In-memory cache for static knowledge chunks to eliminate repeated DB queries during AI evaluation
+interface ChunkCacheEntry {
+  expiresAt: number;
+  data: any[];
+}
+const CHUNK_CACHE = new Map<string, ChunkCacheEntry>();
+const CHUNK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export class KnowledgeRepository {
+  private invalidateCache() {
+    CHUNK_CACHE.clear();
+  }
+
   async createDocument(data: {
     title: string;
     category: string;
@@ -9,6 +21,7 @@ export class KnowledgeRepository {
     version?: string;
     chunks?: Array<{ chunkIndex: number; content: string; embedding?: string }>;
   }) {
+    this.invalidateCache();
     return prisma.knowledgeDocument.create({
       data: {
         title: data.title,
@@ -47,6 +60,7 @@ export class KnowledgeRepository {
   }
 
   async updateDocument(id: string, data: { title?: string; category?: string; content?: string; source?: string }) {
+    this.invalidateCache();
     return prisma.knowledgeDocument.update({
       where: { id },
       data,
@@ -55,6 +69,7 @@ export class KnowledgeRepository {
   }
 
   async deleteDocument(id: string) {
+    this.invalidateCache();
     return prisma.knowledgeDocument.delete({
       where: { id },
     });
@@ -69,7 +84,13 @@ export class KnowledgeRepository {
   }
 
   async searchChunks(category?: string) {
-    return prisma.knowledgeChunk.findMany({
+    const cacheKey = category ? category.toLowerCase().trim() : '__ALL__';
+    const cached = CHUNK_CACHE.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.data;
+    }
+
+    const data = await prisma.knowledgeChunk.findMany({
       where: category
         ? {
             document: {
@@ -88,6 +109,13 @@ export class KnowledgeRepository {
         },
       },
     });
+
+    CHUNK_CACHE.set(cacheKey, {
+      expiresAt: Date.now() + CHUNK_CACHE_TTL_MS,
+      data,
+    });
+
+    return data;
   }
 }
 

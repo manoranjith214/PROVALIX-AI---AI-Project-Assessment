@@ -550,12 +550,6 @@ export const AIAssistantDrawer: React.FC = () => {
                     type="text"
                     value={inputText}
                     onChange={e => setInputText(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
                     placeholder="Ask in English, Tamil, Tanglish, or Hindi..."
                     className="flex-1 bg-[#0F172A] border border-[#243047] focus:border-[#7C3AED] focus:ring-2 focus:ring-[#7C3AED]/20 text-xs sm:text-sm rounded-xl px-3.5 py-2.5 outline-none transition-all text-[#F8FAFC] placeholder:text-[#64748B]"
                     disabled={isLoading}
