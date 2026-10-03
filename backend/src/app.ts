@@ -9,6 +9,12 @@ import { errorHandler, notFoundHandler } from './middleware/errorMiddleware';
 export function createApp(): Express {
   const app = express();
 
+  // Reverse Proxy Configuration (Render / Production)
+  // Environment-aware: enables 1 hop when in production or on Render, false in local dev unless TRUST_PROXY is set
+  if (config.trustProxy) {
+    app.set('trust proxy', config.trustProxy);
+  }
+
   // Security Middleware
   app.use(
     helmet({

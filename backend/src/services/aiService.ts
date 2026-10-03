@@ -16,7 +16,7 @@ export class AIService {
   private getProvider(): { provider: AIProvider; providerName: string; modelName: string } {
     const provider = getAIProvider();
     const providerName = (config.ai.provider || 'gemini').toLowerCase();
-    const modelName = provider instanceof GeminiProvider ? provider.getModelName() : (config.ai.geminiModel || 'gemini-3.8-flash');
+    const modelName = provider instanceof GeminiProvider ? provider.getModelName() : config.ai.geminiModel;
     return { provider, providerName, modelName };
   }
 
@@ -46,11 +46,10 @@ export class AIService {
 
     const { provider, providerName, modelName } = this.getProvider();
 
-    // 2. Safe Server-Side Logging (Requirement 2 - Never log secrets/tokens/keys)
-    console.log(`[AIService] Request received for authenticated user ID: ${userId}`);
+    // 2. Safe Server-Side Logging: Log only AI provider, model name, request intent, response status (never keys/tokens)
     console.log(`[AIService] AI provider selected: ${providerName}`);
     console.log(`[AIService] Model selected: ${modelName}`);
-    console.log(`[AIService] Request started (intent: ${detectedIntent}, lang: ${detectedLanguage}, historyTurns: ${conversationHistory.length})`);
+    console.log(`[AIService] Request intent: ${detectedIntent}`);
 
     const startTime = Date.now();
 
@@ -73,9 +72,8 @@ export class AIService {
 
       const trimmedResponse = responseText.trim();
 
-      // Log success telemetry
-      console.log(`[AIService] Provider response status: 200 OK (${durationMs}ms)`);
-      console.log(`[AIService] Response parsing result: Success (${trimmedResponse.length} chars)`);
+      // Log success telemetry: response status
+      console.log(`[AIService] Response status: 200 OK (${durationMs}ms)`);
 
       return trimmedResponse;
     } catch (err: any) {
@@ -147,9 +145,8 @@ export class AIService {
         userFacingMessage = err.message || userFacingMessage;
       }
 
-      // Safe error logging (Requirement 2 & 5)
-      console.error(`[AIService] Provider response status: ${statusCode} (failed after ${durationMs}ms)`);
-      console.error(`[AIService] Provider error message: ${safeErrMsg}`);
+      // Safe error logging: Response status
+      console.error(`[AIService] Response status: ${statusCode} (Error: ${safeErrMsg})`);
 
       throw new AppError(userFacingMessage, statusCode);
     }

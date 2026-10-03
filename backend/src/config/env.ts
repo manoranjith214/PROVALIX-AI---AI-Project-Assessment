@@ -3,6 +3,15 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+function getCentralizedGeminiModel(): string {
+  const envModel = (process.env.GEMINI_MODEL || process.env.AI_MODEL || '').trim();
+  // Guard against retired/discontinued models (e.g. gemini-2.0-flash, gemini-1.5-flash) that throw 404
+  if (!envModel || envModel === 'gemini-2.0-flash' || envModel === 'gemini-1.5-flash') {
+    return 'gemini-3.8-flash';
+  }
+  return envModel;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -10,6 +19,9 @@ export const config = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   backendUrl: process.env.BACKEND_URL || 'http://localhost:5000',
   corsOrigin: process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173',
+  trustProxy: process.env.TRUST_PROXY
+    ? (!isNaN(Number(process.env.TRUST_PROXY)) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY === 'true')
+    : (process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER) ? 1 : false),
   
   supabase: {
     url: process.env.SUPABASE_URL || '',
@@ -47,7 +59,7 @@ export const config = {
   ai: {
     provider: (process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'mock')).toLowerCase(),
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    geminiModel: getCentralizedGeminiModel(),
   },
 };
 

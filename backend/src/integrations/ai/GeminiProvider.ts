@@ -16,7 +16,9 @@ export class GeminiProvider implements AIProvider {
 
   constructor(apiKey?: string, modelName?: string) {
     const key = apiKey || config.ai.geminiApiKey;
-    this.modelName = modelName || config.ai.geminiModel || 'gemini-3.8-flash';
+    this.modelName = (modelName && modelName !== 'gemini-2.0-flash' && modelName !== 'gemini-1.5-flash')
+      ? modelName
+      : config.ai.geminiModel;
     this.fallbackProvider = new MockAIProvider();
 
     if (key && key.trim().length > 0) {
@@ -149,20 +151,18 @@ STRICT OPERATIONAL RULES:
         const isTransient =
           errMsg.includes('503') ||
           errMsg.includes('UNAVAILABLE') ||
-          errMsg.includes('high demand');
+          errMsg.includes('high demand') ||
+          errMsg.includes('overloaded');
         const isRateLimit =
           errMsg.includes('429') ||
           errMsg.includes('RESOURCE_EXHAUSTED') ||
           errMsg.includes('quota');
 
-        if (isRateLimit) {
-          // Wait 2s and retry once to absorb burst rate-limiting
-          console.warn('⚠️ [GeminiProvider]: Rate limit encountered, retrying after 2s backoff...');
+        if (isRateLimit || isTransient) {
+          // Wait 2s and retry once to absorb rate limits or transient demand spikes on the configured model
+          console.warn(`⚠️ [GeminiProvider]: ${isRateLimit ? 'Rate limit' : 'Transient spike / 503'} encountered on ${this.modelName}, retrying after 2s backoff...`);
           await new Promise((r) => setTimeout(r, 2000));
           response = await executeCall(this.modelName);
-        } else if (isTransient && this.modelName !== 'gemini-3.5-flash-lite') {
-          console.warn(`⚠️ [GeminiProvider]: Primary model ${this.modelName} unavailable, attempting backup model gemini-3.5-flash-lite...`);
-          response = await executeCall('gemini-3.5-flash-lite');
         } else {
           throw firstErr;
         }
@@ -222,15 +222,13 @@ STRICT OPERATIONAL RULES:
       const isTransient =
         errMsg.includes('503') ||
         errMsg.includes('UNAVAILABLE') ||
-        errMsg.includes('high demand');
+        errMsg.includes('high demand') ||
+        errMsg.includes('overloaded');
 
-      if (isRateLimit) {
-        console.warn('⚠️ [GeminiProvider]: Rate limit encountered in JSON eval, retrying after 2s backoff...');
+      if (isRateLimit || isTransient) {
+        console.warn(`⚠️ [GeminiProvider]: ${isRateLimit ? 'Rate limit' : 'Transient spike / 503'} encountered in JSON eval on ${modelName}, retrying after 2s backoff...`);
         await new Promise((r) => setTimeout(r, 2000));
         response = await executeCall(modelName);
-      } else if (isTransient && modelName !== 'gemini-3.5-flash-lite') {
-        console.warn(`⚠️ [GeminiProvider]: Primary model ${modelName} unavailable, attempting backup model gemini-3.5-flash-lite...`);
-        response = await executeCall('gemini-3.5-flash-lite');
       } else {
         throw firstErr;
       }
