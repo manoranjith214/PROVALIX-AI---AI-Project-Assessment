@@ -9,6 +9,156 @@ import {
 import { MockAIProvider } from './MockAIProvider';
 import { config } from '../../config/env';
 
+export type GeminiQuotaType =
+  | 'DAILY_FREE_TIER'
+  | 'RPM_LIMIT'
+  | 'TOKEN_LIMIT'
+  | 'TEMPORARY_RATE_LIMIT'
+  | 'UNKNOWN';
+
+export interface GeminiQuotaDetails {
+  is429: boolean;
+  quotaType: GeminiQuotaType;
+  retryAllowed: boolean;
+  retryAfterSeconds?: number;
+  userFacingMessage: string;
+}
+
+export class GeminiQuotaError extends Error {
+  statusCode: number;
+  errorCode: string;
+  quotaType: GeminiQuotaType;
+  retryAllowed: boolean;
+  retryAfterSeconds?: number;
+  userFacingMessage: string;
+
+  constructor(details: GeminiQuotaDetails, originalMessage?: string) {
+    super(details.userFacingMessage);
+    this.name = 'GeminiQuotaError';
+    this.statusCode = 429;
+    this.errorCode = 'AI_QUOTA_EXCEEDED';
+    this.quotaType = details.quotaType;
+    this.retryAllowed = details.retryAllowed;
+    this.retryAfterSeconds = details.retryAfterSeconds;
+    this.userFacingMessage = details.userFacingMessage;
+  }
+}
+
+export function parseGeminiQuotaError(err: any): GeminiQuotaDetails {
+  const errMsg = err?.message || String(err || '');
+  const lowerMsg = errMsg.toLowerCase();
+  const statusCode = err?.status || err?.statusCode || (lowerMsg.includes('429') ? 429 : 500);
+
+  const is429 =
+    statusCode === 429 ||
+    lowerMsg.includes('429') ||
+    lowerMsg.includes('resource_exhausted') ||
+    lowerMsg.includes('quota exceeded') ||
+    lowerMsg.includes('quota_exceeded');
+
+  if (!is429) {
+    return {
+      is429: false,
+      quotaType: 'UNKNOWN',
+      retryAllowed: false,
+      userFacingMessage: 'AI service temporarily unavailable. Please click Retry.',
+    };
+  }
+
+  // Parse retryAfterSeconds if present
+  let retryAfterSeconds: number | undefined;
+
+  // 1. Try parsing JSON structure if embedded
+  try {
+    const jsonMatch = errMsg.match(/\{[\s\S]*"error"[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const details = parsed?.error?.details || [];
+      const retryInfo = details.find((d: any) => d['@type']?.includes('RetryInfo') || d?.retryDelay);
+      if (retryInfo?.retryDelay) {
+        const secMatch = String(retryInfo.retryDelay).match(/^(\d+(\.\d+)?)s?$/);
+        if (secMatch) {
+          retryAfterSeconds = Math.round(parseFloat(secMatch[1]));
+        }
+      }
+    }
+  } catch {
+    // Ignore JSON parse failure
+  }
+
+  // 2. Try regex extraction from message (e.g. "Please retry in 15h2m47s" or "Please retry in 50s")
+  if (!retryAfterSeconds) {
+    const hoursMinMatch = errMsg.match(/retry in\s+(\d+)h(?:(\d+)m)?(?:(\d+)s)?/i);
+    if (hoursMinMatch) {
+      const h = parseInt(hoursMinMatch[1], 10) || 0;
+      const m = parseInt(hoursMinMatch[2], 10) || 0;
+      const s = parseInt(hoursMinMatch[3], 10) || 0;
+      retryAfterSeconds = h * 3600 + m * 60 + s;
+    } else {
+      const secMatch = errMsg.match(/retry in\s+(\d+(\.\d+)?)s/i);
+      if (secMatch) {
+        retryAfterSeconds = Math.round(parseFloat(secMatch[1]));
+      }
+    }
+  }
+
+  // 3. Determine Quota Type
+  let quotaType: GeminiQuotaType = 'TEMPORARY_RATE_LIMIT';
+
+  const isDaily =
+    lowerMsg.includes('generaterequestsperday') ||
+    lowerMsg.includes('perday') ||
+    (lowerMsg.includes('perprojectpermodel-freetier') && (lowerMsg.includes('limit: 20') || lowerMsg.includes('day'))) ||
+    (lowerMsg.includes('generate_content_free_tier_requests') && (lowerMsg.includes('limit: 20') || (retryAfterSeconds !== undefined && retryAfterSeconds > 3600))) ||
+    (retryAfterSeconds !== undefined && retryAfterSeconds > 3600);
+
+  const isTokens =
+    lowerMsg.includes('tokensperminute') ||
+    lowerMsg.includes('token quota') ||
+    lowerMsg.includes('generatecontenttokens');
+
+  const isRpm =
+    lowerMsg.includes('generaterequestsperminute') ||
+    lowerMsg.includes('requestsperminute') ||
+    lowerMsg.includes('rpm') ||
+    (retryAfterSeconds !== undefined && retryAfterSeconds > 5 && retryAfterSeconds <= 3600);
+
+  if (isDaily) {
+    quotaType = 'DAILY_FREE_TIER';
+  } else if (isTokens) {
+    quotaType = 'TOKEN_LIMIT';
+  } else if (isRpm) {
+    quotaType = 'RPM_LIMIT';
+  } else {
+    quotaType = 'TEMPORARY_RATE_LIMIT';
+  }
+
+  // Strictly allow retry ONLY for brief transient rate limits where retryAfterSeconds <= 3s
+  const retryAllowed =
+    quotaType === 'TEMPORARY_RATE_LIMIT' &&
+    (!retryAfterSeconds || retryAfterSeconds <= 3);
+
+  // User-facing message
+  let userFacingMessage = 'The AI request limit has been reached. Please try again later.';
+  if (retryAfterSeconds && retryAfterSeconds > 0) {
+    const hours = Math.round(retryAfterSeconds / 3600);
+    if (hours >= 1) {
+      userFacingMessage = `AI usage limit reached. Try again in approximately ${hours} hour${hours > 1 ? 's' : ''}.`;
+    } else {
+      const minutes = Math.max(1, Math.round(retryAfterSeconds / 60));
+      userFacingMessage = `AI usage limit reached. Try again in approximately ${minutes} minute${minutes > 1 ? 's' : ''}.`;
+    }
+  }
+
+  return {
+    is429: true,
+    quotaType,
+    retryAllowed,
+    retryAfterSeconds,
+    userFacingMessage,
+  };
+}
+
 export class GeminiProvider implements AIProvider {
   private client: GoogleGenAI | null = null;
   private modelName: string;
@@ -144,33 +294,57 @@ STRICT OPERATIONAL RULES:
         });
       };
 
-      try {
-        response = await executeCall(this.modelName);
-      } catch (firstErr: any) {
-        const errMsg = firstErr?.message || '';
-        const isTransient =
-          errMsg.includes('503') ||
-          errMsg.includes('UNAVAILABLE') ||
-          errMsg.includes('high demand') ||
-          errMsg.includes('overloaded');
-        const isRateLimit =
-          errMsg.includes('429') ||
-          errMsg.includes('RESOURCE_EXHAUSTED') ||
-          errMsg.includes('quota');
+      const maxRetries = 1;
+      let attempt = 0;
 
-        if (isRateLimit || isTransient) {
-          // Wait 2s and retry once to absorb rate limits or transient demand spikes on the configured model
-          console.warn(`⚠️ [GeminiProvider]: ${isRateLimit ? 'Rate limit' : 'Transient spike / 503'} encountered on ${this.modelName}, retrying after 2s backoff...`);
-          await new Promise((r) => setTimeout(r, 2000));
+      while (attempt <= maxRetries) {
+        attempt++;
+        try {
           response = await executeCall(this.modelName);
-        } else {
+          break;
+        } catch (firstErr: any) {
+          const errMsg = firstErr?.message || String(firstErr || '');
+          const quotaDetails = parseGeminiQuotaError(firstErr);
+
+          if (quotaDetails.is429) {
+            // Safe backend logging (Requirement 11 - no secrets/tokens/keys logged)
+            console.warn('[GeminiProvider] 429 quota exceeded');
+            console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
+            console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
+
+            if (!quotaDetails.retryAllowed || attempt > maxRetries) {
+              throw new GeminiQuotaError(quotaDetails, errMsg);
+            }
+
+            const waitMs = Math.min((quotaDetails.retryAfterSeconds || 2) * 1000, 3000);
+            console.warn(`⚠️ [GeminiProvider]: Temporary rate limit, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})...`);
+            await new Promise((r) => setTimeout(r, waitMs));
+            continue;
+          }
+
+          const isTransient =
+            errMsg.includes('503') ||
+            errMsg.includes('UNAVAILABLE') ||
+            errMsg.includes('high demand') ||
+            errMsg.includes('overloaded');
+
+          if (isTransient && attempt <= maxRetries) {
+            console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered on ${this.modelName}, retrying after 2s backoff (attempt ${attempt}/${maxRetries})...`);
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+
           throw firstErr;
         }
       }
 
-      const responseText = response.text;
-      if (responseText && responseText.trim().length > 0) {
-        return responseText.trim();
+      if (!response || !response.text) {
+        throw new Error('AI provider returned an empty response.');
+      }
+
+      const responseText = response.text.trim();
+      if (responseText.length > 0) {
+        return responseText;
       }
 
       throw new Error('AI provider returned an empty response.');
@@ -210,34 +384,55 @@ STRICT OPERATIONAL RULES:
       });
     };
 
+    const maxRetries = 1;
+    let attempt = 0;
     let response;
-    try {
-      response = await executeCall(modelName);
-    } catch (firstErr: any) {
-      const errMsg = firstErr?.message || '';
-      const isRateLimit =
-        errMsg.includes('429') ||
-        errMsg.includes('RESOURCE_EXHAUSTED') ||
-        errMsg.includes('quota');
-      const isTransient =
-        errMsg.includes('503') ||
-        errMsg.includes('UNAVAILABLE') ||
-        errMsg.includes('high demand') ||
-        errMsg.includes('overloaded');
 
-      if (isRateLimit || isTransient) {
-        console.warn(`⚠️ [GeminiProvider]: ${isRateLimit ? 'Rate limit' : 'Transient spike / 503'} encountered in JSON eval on ${modelName}, retrying after 2s backoff...`);
-        await new Promise((r) => setTimeout(r, 2000));
+    while (attempt <= maxRetries) {
+      attempt++;
+      try {
         response = await executeCall(modelName);
-      } else {
+        break;
+      } catch (firstErr: any) {
+        const errMsg = firstErr?.message || String(firstErr || '');
+        const quotaDetails = parseGeminiQuotaError(firstErr);
+
+        if (quotaDetails.is429) {
+          console.warn('[GeminiProvider] 429 quota exceeded');
+          console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
+          console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
+
+          if (!quotaDetails.retryAllowed || attempt > maxRetries) {
+            throw new GeminiQuotaError(quotaDetails, errMsg);
+          }
+
+          const waitMs = Math.min((quotaDetails.retryAfterSeconds || 2) * 1000, 3000);
+          console.warn(`⚠️ [GeminiProvider]: Temporary rate limit in JSON eval, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})...`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+
+        const isTransient =
+          errMsg.includes('503') ||
+          errMsg.includes('UNAVAILABLE') ||
+          errMsg.includes('high demand') ||
+          errMsg.includes('overloaded');
+
+        if (isTransient && attempt <= maxRetries) {
+          console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered in JSON eval on ${modelName}, retrying after 2s backoff (attempt ${attempt}/${maxRetries})...`);
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
         throw firstErr;
       }
     }
 
-    const text = response.text;
-    if (!text) {
+    if (!response || !response.text) {
       throw new Error('AI provider returned empty evaluation response.');
     }
+
+    const text = response.text;
     return JSON.parse(text);
   }
 

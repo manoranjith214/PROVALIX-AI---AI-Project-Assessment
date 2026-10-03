@@ -339,14 +339,31 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       console.error('AI assistant call failed:', err);
       let errorMessage = 'AI service encountered a server error.';
       const status = err?.status || err?.response?.status;
+      const errorCode = err?.errorCode || err?.response?.data?.error;
+      const retryAfterSeconds = err?.retryAfterSeconds || err?.response?.data?.retryAfterSeconds;
       const lowerMsg = (err?.message || '').toLowerCase();
 
       if (
+        errorCode === 'AI_QUOTA_EXCEEDED' ||
+        status === 429 ||
         lowerMsg.includes('quota') ||
         lowerMsg.includes('resource_exhausted') ||
-        lowerMsg.includes('rate_limit_exceeded') && lowerMsg.includes('quota')
+        lowerMsg.includes('usage limit') ||
+        lowerMsg.includes('request limit')
       ) {
-        errorMessage = 'AI provider quota is currently unavailable.';
+        if (retryAfterSeconds && retryAfterSeconds > 0) {
+          const hours = Math.round(retryAfterSeconds / 3600);
+          if (hours >= 1) {
+            errorMessage = `AI usage limit reached. Try again in approximately ${hours} hour${hours > 1 ? 's' : ''}.`;
+          } else {
+            const minutes = Math.max(1, Math.round(retryAfterSeconds / 60));
+            errorMessage = `AI usage limit reached. Try again in approximately ${minutes} minute${minutes > 1 ? 's' : ''}.`;
+          }
+        } else if (err?.message && !err.message.includes('{') && !err.message.includes('API key') && !err.message.includes('429')) {
+          errorMessage = err.message;
+        } else {
+          errorMessage = 'AI usage limit reached. Please try again later.';
+        }
       } else if (
         status === 0 ||
         lowerMsg.includes('unable to connect') ||
@@ -365,11 +382,9 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         errorMessage = 'Your session has expired. Please sign in again.';
       } else if (status === 403) {
         errorMessage = 'You do not have permission to access this resource.';
-      } else if (status === 429) {
-        errorMessage = 'AI request limit reached. Please try again later.';
       } else if (status >= 500) {
         errorMessage = 'AI service encountered a server error.';
-      } else if (err?.message) {
+      } else if (err?.message && !err.message.includes('{') && !err.message.includes('API key')) {
         errorMessage = err.message;
       }
 

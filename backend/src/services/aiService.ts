@@ -81,12 +81,39 @@ export class AIService {
       const rawErrMsg = err?.message || String(err);
       const safeErrMsg = this.sanitizeErrorLog(rawErrMsg);
 
-      // Analyze error status and message according to Task 7 specification
+      // Analyze error status and message according to Task 7 & Task 4 specification
       const errStr = safeErrMsg.toLowerCase();
-      let statusCode = 500;
-      let userFacingMessage = 'AI service temporarily unavailable. Please click Retry.';
+      let statusCode = err?.statusCode || 500;
+      let errorCode: string | undefined = err?.errorCode;
+      let retryAfterSeconds: number | undefined = err?.retryAfterSeconds;
+      let userFacingMessage = err?.userFacingMessage || 'AI service temporarily unavailable. Please click Retry.';
 
-      if (
+      const isQuota =
+        err?.name === 'GeminiQuotaError' ||
+        err?.statusCode === 429 ||
+        errStr.includes('429') ||
+        errStr.includes('quota') ||
+        errStr.includes('resource_exhausted') ||
+        errStr.includes('rate limit');
+
+      if (isQuota) {
+        // Rate limit / Quota exceeded
+        statusCode = 429;
+        errorCode = errorCode || 'AI_QUOTA_EXCEEDED';
+        if (err?.userFacingMessage) {
+          userFacingMessage = err.userFacingMessage;
+        } else if (retryAfterSeconds && retryAfterSeconds > 0) {
+          const hours = Math.round(retryAfterSeconds / 3600);
+          if (hours >= 1) {
+            userFacingMessage = `AI usage limit reached. Try again in approximately ${hours} hour${hours > 1 ? 's' : ''}.`;
+          } else {
+            const minutes = Math.max(1, Math.round(retryAfterSeconds / 60));
+            userFacingMessage = `AI usage limit reached. Try again in approximately ${minutes} minute${minutes > 1 ? 's' : ''}.`;
+          }
+        } else {
+          userFacingMessage = 'The AI request limit has been reached. Please try again later.';
+        }
+      } else if (
         err.statusCode === 404 ||
         errStr.includes('404') ||
         errStr.includes('not_found') ||
@@ -97,16 +124,6 @@ export class AIService {
         // Gemini model unavailable / retired
         statusCode = 500;
         userFacingMessage = 'AI model configuration error. Please contact administrator.';
-      } else if (
-        err.statusCode === 429 ||
-        errStr.includes('429') ||
-        errStr.includes('quota') ||
-        errStr.includes('resource_exhausted') ||
-        errStr.includes('rate limit')
-      ) {
-        // Rate limit
-        statusCode = 429;
-        userFacingMessage = 'AI service rate limit reached. Please wait a moment before trying again.';
       } else if (
         err.statusCode === 401 ||
         err.statusCode === 403 ||
@@ -148,7 +165,7 @@ export class AIService {
       // Safe error logging: Response status
       console.error(`[AIService] Response status: ${statusCode} (Error: ${safeErrMsg})`);
 
-      throw new AppError(userFacingMessage, statusCode);
+      throw new AppError(userFacingMessage, statusCode, [], { errorCode, retryAfterSeconds });
     }
   }
 }

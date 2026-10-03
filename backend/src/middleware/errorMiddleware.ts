@@ -5,11 +5,20 @@ import { sendError } from '../utils/response';
 export class AppError extends Error {
   statusCode: number;
   errors: any[];
+  errorCode?: string;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, statusCode = 500, errors: any[] = []) {
+  constructor(
+    message: string,
+    statusCode = 500,
+    errors: any[] = [],
+    extra?: { errorCode?: string; retryAfterSeconds?: number }
+  ) {
     super(message);
     this.statusCode = statusCode;
     this.errors = errors;
+    if (extra?.errorCode) this.errorCode = extra.errorCode;
+    if (extra?.retryAfterSeconds !== undefined) this.retryAfterSeconds = extra.retryAfterSeconds;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -32,6 +41,9 @@ export function errorHandler(
   // Handle Custom AppError
   if (err instanceof AppError || err.statusCode) {
     const extra: Record<string, any> = {};
+    if (err.errorCode) extra.error = err.errorCode;
+    else if (err.error) extra.error = err.error;
+    if (err.retryAfterSeconds !== undefined) extra.retryAfterSeconds = err.retryAfterSeconds;
     if (err.status) extra.status = err.status;
     if (err.missingResources) extra.missingResources = err.missingResources;
     return sendError(res, err.message, err.statusCode || 500, err.errors || [], extra);

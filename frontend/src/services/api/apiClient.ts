@@ -18,13 +18,17 @@ export class ApiError extends Error {
   status: number;
   errors?: any[];
   data?: any;
+  errorCode?: string;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, status: number, errors?: any[], data?: any) {
+  constructor(message: string, status: number, errors?: any[], data?: any, errorCode?: string, retryAfterSeconds?: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.errors = errors;
     this.data = data;
+    this.errorCode = errorCode;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -150,7 +154,9 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
 
   if (!response.ok || json.success === false) {
     const errorMsg = json.message || (json.errors && json.errors[0]?.message) || `Request failed (${response.status})`;
-    throw new ApiError(errorMsg, response.status, json.errors, json.data);
+    const errorCode = (json as any).error;
+    const retryAfterSeconds = (json as any).retryAfterSeconds;
+    throw new ApiError(errorMsg, response.status, json.errors, json.data, errorCode, retryAfterSeconds);
   }
 
   if (options.rawEnvelope) {
