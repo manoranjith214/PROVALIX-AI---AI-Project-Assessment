@@ -23,7 +23,8 @@ import {
   Sparkles,
   Award,
   Calendar,
-  Loader2
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -40,6 +41,7 @@ export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectCheckerProject[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
@@ -51,54 +53,54 @@ export const DashboardPage: React.FC = () => {
     topRanked: any[];
   }>({ topRanked: [] });
 
-  useEffect(() => {
-    let isMounted = true;
-    async function loadDashboardData() {
-      try {
-        setLoading(true);
-        const [projRes, teamRes, classRes, notifRes, evalsRes, leaderRes] = await Promise.allSettled([
-          projectCheckerService.listProjects({ limit: 10 }),
-          teamService.getTeams(),
-          classroomService.getClassrooms(),
-          notificationService.getNotifications(user.id),
-          apiClient.get<any[]>('/dashboard/current-evaluations'),
-          apiClient.get<any>('/dashboard/leaderboard-preview'),
-        ]);
+  const loadDashboardData = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      setSyncError(null);
+      const [projRes, teamRes, classRes, notifRes, evalsRes, leaderRes] = await Promise.allSettled([
+        projectCheckerService.listProjects({ limit: 10 }),
+        teamService.getTeams(),
+        classroomService.getClassrooms(),
+        notificationService.getNotifications(user.id),
+        apiClient.get<any[]>('/dashboard/current-evaluations'),
+        apiClient.get<any>('/dashboard/leaderboard-preview'),
+      ]);
 
-        if (isMounted) {
-          if (projRes.status === 'fulfilled' && Array.isArray(projRes.value)) {
-            setProjects(projRes.value);
-          }
-          if (teamRes.status === 'fulfilled' && Array.isArray(teamRes.value)) {
-            setTeams(teamRes.value);
-          }
-          if (classRes.status === 'fulfilled' && Array.isArray(classRes.value)) {
-            setClassrooms(classRes.value);
-          }
-          if (notifRes.status === 'fulfilled' && Array.isArray(notifRes.value)) {
-            setNotifications(notifRes.value);
-          }
-          if (evalsRes.status === 'fulfilled' && Array.isArray(evalsRes.value)) {
-            setCurrentEvaluations(evalsRes.value);
-          }
-          if (leaderRes.status === 'fulfilled' && leaderRes.value) {
-            setLeaderboardPreview(leaderRes.value);
-          }
-        }
-      } catch (err) {
-        console.warn('Dashboard real data load warning:', err);
-      } finally {
-        if (isMounted) setLoading(false);
+      if (projRes.status === 'fulfilled' && Array.isArray(projRes.value)) {
+        setProjects(projRes.value);
       }
-    }
+      if (teamRes.status === 'fulfilled' && Array.isArray(teamRes.value)) {
+        setTeams(teamRes.value);
+      }
+      if (classRes.status === 'fulfilled' && Array.isArray(classRes.value)) {
+        setClassrooms(classRes.value);
+      }
+      if (notifRes.status === 'fulfilled' && Array.isArray(notifRes.value)) {
+        setNotifications(notifRes.value);
+      }
+      if (evalsRes.status === 'fulfilled' && Array.isArray(evalsRes.value)) {
+        setCurrentEvaluations(evalsRes.value);
+      }
+      if (leaderRes.status === 'fulfilled' && leaderRes.value) {
+        setLeaderboardPreview(leaderRes.value);
+      }
 
+      if (projRes.status === 'rejected' && teamRes.status === 'rejected' && classRes.status === 'rejected') {
+        setSyncError('Live dashboard data could not be retrieved from the server. Check your connection or API status.');
+      }
+    } catch (err: any) {
+      console.warn('Dashboard real data load warning:', err);
+      setSyncError(err?.message || 'Failed to sync live dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  }, [user.id]);
+
+  useEffect(() => {
     if (user.id) {
       loadDashboardData();
     }
-    return () => {
-      isMounted = false;
-    };
-  }, [user.id]);
+  }, [user.id, loadDashboardData]);
 
   // Evaluated projects
   const evaluatedProjects = useMemo(() => {
@@ -218,6 +220,18 @@ export const DashboardPage: React.FC = () => {
         <div className="p-8 text-center bg-[#111827] rounded-2xl border border-[#243047]">
           <Loader2 className="w-6 h-6 animate-spin text-[#7C3AED] mx-auto mb-2" />
           <p className="text-xs text-[#94A3B8] font-medium">Loading live dashboard metrics...</p>
+        </div>
+      )}
+
+      {syncError && !loading && (
+        <div className="flex items-center justify-between p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-300">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{syncError}</span>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => loadDashboardData()}>
+            Retry Sync
+          </Button>
         </div>
       )}
 

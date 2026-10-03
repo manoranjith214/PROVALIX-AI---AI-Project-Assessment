@@ -20,7 +20,8 @@ import {
   Loader2, 
   Mail, 
   UserCheck,
-  Calendar
+  Calendar,
+  AlertTriangle
 } from 'lucide-react';
 
 export const TeamsPage: React.FC = () => {
@@ -31,10 +32,12 @@ export const TeamsPage: React.FC = () => {
   const [invitations, setInvitations] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [processingInviteId, setProcessingInviteId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [fetchedTeams, fetchedInvites] = await Promise.all([
         teamService.getTeams(),
@@ -42,8 +45,9 @@ export const TeamsPage: React.FC = () => {
       ]);
       setTeams(fetchedTeams);
       setInvitations(fetchedInvites);
-    } catch {
-      // Handled by service fallbacks
+    } catch (err: any) {
+      console.warn('[TeamsPage] Failed to load squads:', err);
+      setLoadError(err?.message || 'Failed to load squads from server.');
     } finally {
       setIsLoading(false);
     }
@@ -180,6 +184,19 @@ export const TeamsPage: React.FC = () => {
           <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
           <p className="text-xs font-medium">Fetching your project squads...</p>
         </div>
+      ) : loadError ? (
+        <Card className="p-12 text-center space-y-4 max-w-md mx-auto my-8 border-rose-500/20 bg-rose-500/5">
+          <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 mx-auto flex items-center justify-center">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <h3 className="text-base font-bold text-slate-100">Unable to Fetch Squads</h3>
+          <p className="text-xs text-rose-300/80 leading-relaxed">{loadError}</p>
+          <div className="pt-2">
+            <Button variant="primary" size="sm" onClick={loadData}>
+              Retry Loading
+            </Button>
+          </div>
+        </Card>
       ) : filtered.length === 0 ? (
         /* Empty State */
         <Card className="p-12 text-center space-y-4 max-w-md mx-auto my-8">

@@ -31,11 +31,29 @@ export class TeamService {
     return teamRepository.getUserInvitations(userId);
   }
 
-  async getTeamById(teamId: string) {
+  async getTeamById(teamId: string, currentUserId?: string) {
     const team = await teamRepository.findById(teamId);
     if (!team) {
       throw new AppError('Team not found', 404);
     }
+
+    if (currentUserId) {
+      const isMember = team.members.some((m: any) => m.userId === currentUserId || m.user?.id === currentUserId);
+      const isCaptain = team.captainId === currentUserId || (team as any).createdById === currentUserId;
+      let isClassroomAuthorized = false;
+      try {
+        const participations = await teamRepository.listTeamClassroomParticipations(teamId);
+        isClassroomAuthorized = participations.some((p: any) => {
+          const cls = p.classroom;
+          return cls?.ownerId === currentUserId || cls?.evaluators?.some((e: any) => e.evaluatorId === currentUserId);
+        });
+      } catch {}
+
+      if (!isMember && !isCaptain && !isClassroomAuthorized) {
+        throw new AppError('You do not have permission to access this team', 403);
+      }
+    }
+
     return team;
   }
 

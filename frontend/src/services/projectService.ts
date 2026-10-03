@@ -118,45 +118,40 @@ export const projectService = {
   },
 
   async createProject(projectData: Omit<ProjectDetails, 'id' | 'createdAt'>): Promise<ProjectDetails> {
-    // 1. Persist directly to Supabase public.projects
+    // 1. Authoritative Backend API path -> Prisma -> DB
     try {
+      const created = await projectCheckerService.createProject({
+        title: projectData.title,
+        category: projectData.category,
+        description: projectData.description,
+        problemStatement: projectData.problemStatement,
+        proposedSolution: projectData.proposedSolution,
+        objectives: projectData.objectives,
+        innovation: projectData.innovation,
+        features: projectData.features,
+        targetUsers: projectData.targetUsers,
+        technologies: projectData.technologies,
+        programmingLanguages: projectData.programmingLanguages,
+        testingApproach: projectData.testingApproach,
+        limitations: projectData.limitations,
+        futureEnhancements: projectData.futureEnhancements,
+        githubUrl: projectData.githubUrl,
+        liveDemoUrl: projectData.liveDemoUrl,
+      });
+      return {
+        ...projectData,
+        id: created.id,
+        createdAt: created.createdAt || new Date().toISOString(),
+      };
+    } catch (backendErr) {
+      console.warn('[projectService] Backend createProject failed, falling back to Supabase:', backendErr);
       const createdSb = await supabaseDataService.createProject(projectData);
-      // Also sync to backend if online
-      projectCheckerService.createProject(projectData as any).catch(() => {});
       return {
         ...projectData,
         id: createdSb.id,
         createdAt: createdSb.createdAt || new Date().toISOString(),
       };
-    } catch (err) {
-      console.warn('[projectService] Supabase createProject notice, trying backend:', err);
     }
-
-    // 2. Fallback to backend API
-    const created = await projectCheckerService.createProject({
-      title: projectData.title,
-      category: projectData.category,
-      description: projectData.description,
-      problemStatement: projectData.problemStatement,
-      proposedSolution: projectData.proposedSolution,
-      objectives: projectData.objectives,
-      innovation: projectData.innovation,
-      features: projectData.features,
-      targetUsers: projectData.targetUsers,
-      technologies: projectData.technologies,
-      programmingLanguages: projectData.programmingLanguages,
-      testingApproach: projectData.testingApproach,
-      limitations: projectData.limitations,
-      futureEnhancements: projectData.futureEnhancements,
-      githubUrl: projectData.githubUrl,
-      liveDemoUrl: projectData.liveDemoUrl,
-    });
-
-    return {
-      ...projectData,
-      id: created.id,
-      createdAt: created.createdAt || new Date().toISOString(),
-    };
   },
 
   async getStandaloneEvaluations(): Promise<StandaloneAIEvaluation[]> {

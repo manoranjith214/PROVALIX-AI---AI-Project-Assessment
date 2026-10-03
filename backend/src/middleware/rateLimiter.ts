@@ -24,3 +24,15 @@ export const apiRateLimiter = rateLimit({
     errors: [],
   },
 });
+
+export const evaluationRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 60, // 60 evaluations per 15 minutes per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many evaluation requests from this IP. Please wait a few moments before trying again.',
+    errors: [],
+  },
+});

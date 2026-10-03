@@ -676,6 +676,9 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
 
   async generateFeedback(context: string, score: number): Promise<string> {
     if (!this.client) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error('AI feedback generation is currently unavailable: Gemini client is not initialized.');
+      }
       return this.fallbackProvider.generateFeedback(context, score);
     }
     try {
@@ -684,7 +687,10 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
         contents: `Provide a concise 2-sentence evaluation feedback for score ${score}/100. Context: ${context.slice(0, 300)}`,
       });
       return res.text || this.fallbackProvider.generateFeedback(context, score);
-    } catch {
+    } catch (err: any) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error(err?.message || 'AI feedback generation is currently unavailable.');
+      }
       return this.fallbackProvider.generateFeedback(context, score);
     }
   }
@@ -695,6 +701,9 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
 
   async summarizeReport(reportData: any): Promise<string> {
     if (!this.client) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error('AI report summarizer is currently unavailable: Gemini client is not initialized.');
+      }
       return this.fallbackProvider.summarizeReport(reportData);
     }
     try {
@@ -703,13 +712,19 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
         contents: `Summarize the project evaluation report in 2-3 concise sentences: ${JSON.stringify(reportData).slice(0, 600)}`,
       });
       return res.text || this.fallbackProvider.summarizeReport(reportData);
-    } catch {
+    } catch (err: any) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error(err?.message || 'AI report summarizer is currently unavailable.');
+      }
       return this.fallbackProvider.summarizeReport(reportData);
     }
   }
 
   async generateVivaQuestions(submissionData: any): Promise<GeneratedVivaQuestion[]> {
     if (!this.client) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error('Viva question generation is currently unavailable: Gemini client is not initialized.');
+      }
       return this.fallbackProvider.generateVivaQuestions(submissionData);
     }
     try {
@@ -744,8 +759,14 @@ Respond ONLY as a JSON array:
           return parsed;
         }
       }
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error('AI provider returned an invalid format for viva questions.');
+      }
       return this.fallbackProvider.generateVivaQuestions(submissionData);
-    } catch {
+    } catch (err: any) {
+      if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
+        throw new Error(err?.message || 'Viva question generation service is currently unavailable.');
+      }
       return this.fallbackProvider.generateVivaQuestions(submissionData);
     }
   }

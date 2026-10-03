@@ -117,59 +117,26 @@ export const ProjectReportDetailPage: React.FC = () => {
   };
 
   const handleSavePDF = async () => {
+    if (!id) return;
     success('Preparing official Provalix AI Project Audit PDF...');
     try {
-      if (project && evaluation) {
-        const markdown = `# PROVALIX AI - PROJECT EVALUATION AUDIT REPORT
-**Project Title:** ${project.title}
-**Category / Domain:** ${project.category}
-**Overall Score:** ${evaluation.overallScore}/100
-**Plagiarism Similarity:** ${evaluation.plagiarism?.overallSimilarity}% (${evaluation.plagiarism?.status})
-**Evaluated At:** ${new Date(evaluation.evaluatedAt).toLocaleString()}
-
----
-
-## 1. Executive Summary
-${evaluation.summary}
-
-## 2. Evaluation Criteria Rubric Scores
-${Object.values(evaluation.criteria).map(c => `- **${c.name}**: ${c.obtainedScore}/${c.maxScore} (${c.feedback})`).join('\n')}
-
-## 3. Plagiarism & Integrity Analysis
-- **Code Similarity:** ${evaluation.plagiarism?.codeSimilarity}%
-- **Report Similarity:** ${evaluation.plagiarism?.reportSimilarity}%
-- **Overall Similarity:** ${evaluation.plagiarism?.overallSimilarity}%
-- **Integrity Status:** ${evaluation.plagiarism?.status}
-
-## 4. Architectural & Code Analysis
-${evaluation.codeAnalysis}
-
-## 5. Technical Rigor & Documentation
-${evaluation.technicalAnalysis}
-${evaluation.documentationAnalysis}
-
-## 6. Identified Strengths
-${evaluation.strengths.map(s => `- ${s}`).join('\n')}
-
-## 7. Actionable Improvement Plan
-${evaluation.actionableSuggestions.map(s => `- ${s}`).join('\n')}
-`;
-        const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `Provalix-Audit-Report-${id}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }
-    } catch (err) {
-      console.error('[ProjectReportDetailPage] PDF generation error:', err);
+      const blob = await projectCheckerService.downloadPdfReport(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Provalix-Audit-Report-${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      success('PDF downloaded successfully!');
+    } catch (err: any) {
+      console.error('[ProjectReportDetailPage] PDF download error:', err);
+      // Fallback to browser print dialog if download fails
+      setTimeout(() => {
+        window.print();
+      }, 300);
     }
-    setTimeout(() => {
-      window.print();
-    }, 400);
   };
 
   if (isLoading) {

@@ -26,6 +26,11 @@ export class VerificationService {
       throw new AppError('Submission not found', 404);
     }
 
+    // Role check: Only the classroom owner can verify and officially approve submissions
+    if (submission.classroom.ownerId !== verifiedById) {
+      throw new AppError('Only the classroom owner can verify and officially publish submissions', 403);
+    }
+
     if (!submission.facultyEvaluation) {
       throw new AppError('Cannot verify a submission before faculty evaluation is completed', 400);
     }
@@ -58,6 +63,16 @@ export class VerificationService {
     const submission = await submissionRepository.findById(submissionId);
     if (!submission) {
       throw new AppError('Submission not found', 404);
+    }
+
+    // Role check: Only the classroom owner or assigned evaluators can return a submission
+    const classroom = submission.classroom;
+    const isOwner = classroom.ownerId === verifiedById;
+    const isAssigned = submission.assignedEvaluatorId === verifiedById;
+    const isEvaluator = classroom.evaluators?.some((e: any) => e.evaluatorId === verifiedById);
+
+    if (!isOwner && !isAssigned && !isEvaluator) {
+      throw new AppError('Only the classroom owner or assigned evaluators can return an evaluation', 403);
     }
 
     const verification = await evaluationRepository.upsertVerification({

@@ -1,9 +1,12 @@
 import { projectCheckerRepository } from '../repositories/projectCheckerRepository';
 import { getAIProvider } from '../integrations/ai';
-import { defaultPlagiarismProvider } from '../integrations/plagiarism/MockPlagiarismProvider';
-import { defaultStorageProvider } from '../integrations/storage/LocalStorageProvider';
+import { runPlagiarismPipeline } from '../integrations/plagiarism';
+import { getStorageProvider } from '../integrations/storage';
 import { evidenceAnalyzer } from '../integrations/rubric/evidenceAnalyzer';
 import { rubricEngine } from '../integrations/rubric/rubricEngine';
+import { sourceCodeAnalyzer } from './sourceCodeAnalyzer';
+import { validateAndCalculateProjectCheckerScores } from '../validators/aiEvaluationValidator';
+import { pdfReportGenerator } from './pdfReportGenerator';
 import { PaginationParams } from '../types';
 import { AppError } from '../middleware/errorMiddleware';
 
@@ -43,7 +46,8 @@ export class ProjectCheckerService {
 
   async addResource(projectId: string, userId: string, file: Express.Multer.File, type: string) {
     await this.getProjectById(projectId, userId);
-    const stored = await defaultStorageProvider.saveFile(file, `project-checker/${projectId}`);
+    const storageProvider = getStorageProvider();
+    const stored = await storageProvider.saveFile(file, `project-checker/${projectId}`, { isPrivate: true });
 
     return projectCheckerRepository.addResource({
       projectId,
@@ -59,10 +63,12 @@ export class ProjectCheckerService {
   async runPlagiarismCheck(projectId: string, userId: string) {
     const project = await this.getProjectById(projectId, userId);
 
-    const plagiarismResult = await defaultPlagiarismProvider.analyzeFullSubmission(
-      project.githubUrl,
-      project.description
-    );
+    const plagiarismResult = await runPlagiarismPipeline({
+      submissionOrProject: project,
+      resources: project.resources,
+      githubUrl: project.githubUrl || undefined,
+      description: project.description || undefined,
+    });
 
     return projectCheckerRepository.upsertPlagiarism({
       projectId,
@@ -91,78 +97,70 @@ export class ProjectCheckerService {
       );
     }
 
-    // 2. EVIDENCE ANALYSIS (Requirement 2 & 5)
-    // Extract user claims, verified evidence, missing evidence, and contradictions
-    const evidenceAnalysis = evidenceAnalyzer.extractAndClassifyEvidence(project);
+    // 2. REAL SOURCE CODE INSPECTION (Requirement 4)
+    const sourceAnalysis = await sourceCodeAnalyzer.analyzeProjectSource(project);
 
-    // 3. Get or run plagiarism check first
+    // 3. EVIDENCE ANALYSIS (Requirement 2 & 5)
+    const evidenceAnalysis = evidenceAnalyzer.extractAndClassifyEvidence(project);
+    if (sourceAnalysis.sourceAvailable) {
+      evidenceAnalysis.verifiedEvidence.push(sourceAnalysis.summary);
+      if (sourceAnalysis.hasTests) {
+        evidenceAnalysis.verifiedEvidence.push(`Automated test suites detected: ${sourceAnalysis.testFileCount} test file(s)`);
+      } else {
+        evidenceAnalysis.missingEvidence.push('Automated test files or suites not found in repository archive');
+      }
+      if (sourceAnalysis.dependencies.length > 0) {
+        evidenceAnalysis.verifiedEvidence.push(`Verified dependencies: ${sourceAnalysis.dependencies.slice(0, 10).join(', ')}`);
+      }
+      for (const smell of sourceAnalysis.codeSmells) {
+        evidenceAnalysis.inconsistencies.push(`Code issue in ${smell.file}: ${smell.message}`);
+      }
+    } else {
+      evidenceAnalysis.missingEvidence.push('Source code archive not submitted or unreadable from storage');
+    }
+
+    // 4. Get or run plagiarism check first
     let plagiarism = project.plagiarism;
     if (!plagiarism) {
       plagiarism = await this.runPlagiarismCheck(projectId, userId);
     }
 
-    // 4. Run AI Evaluation with structured evidence input
+    // 5. Run AI Evaluation with structured evidence and real source code inspection
     const aiProvider = getAIProvider();
-    const aiResult = await aiProvider.evaluateProject(project, plagiarism, evidenceAnalysis);
+    const aiResult = await aiProvider.evaluateProject(project, plagiarism, {
+      ...evidenceAnalysis,
+      sourceAnalysis,
+    });
 
-    // 5. VALIDATE AI RESULTS BEFORE PERSISTING (Requirement 18)
-    const requiredCriteria = [
-      'problemDefinition',
-      'innovationNovelty',
-      'technicalImplementation',
-      'functionality',
-      'codeQuality',
-      'documentation',
-      'overallQuality',
-    ] as const;
-
-    if (!aiResult || !aiResult.criteria) {
-      throw new AppError('AI evaluation returned an invalid response. Please try again.', 502);
-    }
-
-    for (const key of requiredCriteria) {
-      const c = aiResult.criteria[key];
-      if (!c || typeof c.obtainedScore !== 'number' || isNaN(c.obtainedScore)) {
-        throw new AppError(`AI evaluation returned invalid score for criterion: ${key}`, 502);
-      }
-      if (c.obtainedScore < 0 || c.obtainedScore > c.maxScore) {
-        throw new AppError(`AI evaluation score out of range for criterion: ${key}`, 502);
-      }
-    }
-
-    // Strictly calculate overall score from individual criteria
-    const criteriaScoresList = Object.values(aiResult.criteria).map((c) => ({
-      score: c.obtainedScore,
-      maxScore: c.maxScore,
-    }));
-    const verifiedTotalScore = rubricEngine.calculateVerifiedScore(criteriaScoresList, 100);
+    // 6. STRICT VALIDATION LAYER & BACKEND SCORE CALCULATION (Requirement 2, 3, 18)
+    const validatedEval = validateAndCalculateProjectCheckerScores(aiResult);
 
     return projectCheckerRepository.upsertAIEvaluation({
       projectId,
-      problemDefinitionScore: aiResult.criteria.problemDefinition.obtainedScore,
-      problemDefinitionFeedback: aiResult.criteria.problemDefinition.feedback,
-      innovationNoveltyScore: aiResult.criteria.innovationNovelty.obtainedScore,
-      innovationNoveltyFeedback: aiResult.criteria.innovationNovelty.feedback,
-      technicalImplementationScore: aiResult.criteria.technicalImplementation.obtainedScore,
-      technicalImplementationFeedback: aiResult.criteria.technicalImplementation.feedback,
-      functionalityScore: aiResult.criteria.functionality.obtainedScore,
-      functionalityFeedback: aiResult.criteria.functionality.feedback,
-      codeQualityScore: aiResult.criteria.codeQuality.obtainedScore,
-      codeQualityFeedback: aiResult.criteria.codeQuality.feedback,
-      documentationScore: aiResult.criteria.documentation.obtainedScore,
-      documentationFeedback: aiResult.criteria.documentation.feedback,
-      overallQualityScore: aiResult.criteria.overallQuality.obtainedScore,
-      overallQualityFeedback: aiResult.criteria.overallQuality.feedback,
-      totalScore: verifiedTotalScore,
-      strengths: aiResult.strengths,
-      weaknesses: aiResult.weaknesses,
-      technicalAnalysis: aiResult.technicalAnalysis,
-      codeAnalysis: aiResult.codeAnalysis,
-      documentationAnalysis: aiResult.documentationAnalysis,
-      actionableSuggestions: aiResult.actionableSuggestions,
-      improvementPlan: aiResult.improvementPlan,
-      summary: aiResult.summary,
-      aiModel: aiResult.aiModel,
+      problemDefinitionScore: validatedEval.criteria.problemDefinition.score,
+      problemDefinitionFeedback: validatedEval.criteria.problemDefinition.feedback,
+      innovationNoveltyScore: validatedEval.criteria.innovationNovelty.score,
+      innovationNoveltyFeedback: validatedEval.criteria.innovationNovelty.feedback,
+      technicalImplementationScore: validatedEval.criteria.technicalImplementation.score,
+      technicalImplementationFeedback: validatedEval.criteria.technicalImplementation.feedback,
+      functionalityScore: validatedEval.criteria.functionality.score,
+      functionalityFeedback: validatedEval.criteria.functionality.feedback,
+      codeQualityScore: validatedEval.criteria.codeQuality.score,
+      codeQualityFeedback: validatedEval.criteria.codeQuality.feedback,
+      documentationScore: validatedEval.criteria.documentation.score,
+      documentationFeedback: validatedEval.criteria.documentation.feedback,
+      overallQualityScore: validatedEval.criteria.overallQuality.score,
+      overallQualityFeedback: validatedEval.criteria.overallQuality.feedback,
+      totalScore: validatedEval.totalScore,
+      strengths: validatedEval.strengths,
+      weaknesses: validatedEval.weaknesses,
+      technicalAnalysis: validatedEval.technicalAnalysis,
+      codeAnalysis: validatedEval.codeAnalysis,
+      documentationAnalysis: validatedEval.documentationAnalysis,
+      actionableSuggestions: validatedEval.actionableSuggestions,
+      improvementPlan: validatedEval.improvementPlan,
+      summary: validatedEval.summary,
+      aiModel: aiResult.aiModel || 'Gemini 2.5 Flash',
       isDemoData: false,
     });
   }
@@ -331,6 +329,11 @@ ${report.aiEvaluation.improvementPlan
   .join('\n\n')}
 `;
     return { markdown: md, report };
+  }
+
+  async generatePdfBuffer(projectId: string, userId: string): Promise<Buffer> {
+    const report = await this.getReport(projectId, userId);
+    return pdfReportGenerator.generateProjectPdf(report as any);
   }
 }
 

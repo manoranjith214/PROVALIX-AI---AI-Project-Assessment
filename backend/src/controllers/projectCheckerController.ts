@@ -121,18 +121,25 @@ export class ProjectCheckerController {
 
   async getPdfReport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const { markdown, report } = await projectCheckerService.getPdfReport(
+      const format = (req.query.format as string || '').toLowerCase();
+      if (format === 'json' || format === 'markdown') {
+        const { markdown, report } = await projectCheckerService.getPdfReport(
+          req.params.id,
+          req.user!.id
+        );
+        return sendSuccess(res, { markdown, report }, 'Report document retrieved', 200);
+      }
+
+      const pdfBuffer = await projectCheckerService.generatePdfBuffer(
         req.params.id,
         req.user!.id
       );
 
-      // Return both formatted markdown content and structured data for PDF/text download
-      return sendSuccess(
-        res,
-        { markdown, report },
-        'Report document ready for PDF generation/download',
-        200
-      );
+      const filename = `Provalix-Project-Report-${req.params.id}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      return res.status(200).send(pdfBuffer);
     } catch (err) {
       next(err);
     }

@@ -29,13 +29,28 @@ describe('AI Provider Switching & Gemini Fallback Tests', () => {
     expect(provider).toBeInstanceOf(GeminiProvider);
   });
 
-  test('Falls back to MockAIProvider when AI_PROVIDER is gemini but GEMINI_API_KEY is missing', () => {
+  test('Falls back to MockAIProvider in development mode when AI_PROVIDER is gemini but GEMINI_API_KEY is missing', () => {
+    const origEnv = config.nodeEnv;
+    config.nodeEnv = 'development';
     config.ai.provider = 'gemini';
     config.ai.geminiApiKey = '';
     resetAIProvider();
 
     const provider = getAIProvider();
     expect(provider).toBeInstanceOf(MockAIProvider);
+    config.nodeEnv = origEnv;
+  });
+
+  test('Refuses silent MockAIProvider fallback in production when GEMINI_API_KEY is missing', () => {
+    const origEnv = config.nodeEnv;
+    config.nodeEnv = 'production';
+    config.ai.provider = 'gemini';
+    config.ai.geminiApiKey = '';
+    resetAIProvider();
+
+    const provider = getAIProvider();
+    expect(provider.constructor.name).toBe('UnavailableAIProvider');
+    config.nodeEnv = origEnv;
   });
 
   test('GeminiProvider refuses to return fake fallback answers when AI_PROVIDER is gemini', async () => {

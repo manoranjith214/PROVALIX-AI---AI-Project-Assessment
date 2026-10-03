@@ -35,6 +35,16 @@ export class SubmissionService {
         throw new AppError('Only the team captain can submit on behalf of the team', 403);
       }
 
+      // Requirement 6: Only valid team/classroom participation can submit classroom team work
+      const participation = await prisma.classroomTeamParticipation.findUnique({
+        where: {
+          classroomId_teamId: { classroomId, teamId },
+        },
+      });
+      if (!participation || participation.status !== 'Approved') {
+        throw new AppError('This team does not have an approved participation status in this classroom', 403);
+      }
+
       // Requirement: Exactly one project submission per participating team
       const existingTeamSub = await prisma.submission.findFirst({
         where: { classroomId, teamId },
@@ -49,6 +59,16 @@ export class SubmissionService {
       }
     } else {
       // Requirement: In Individual mode, each participant submits their own project (prevent duplicate)
+      const isOwner = classroom.ownerId === submitterId;
+      const member = await prisma.classroomMember.findUnique({
+        where: {
+          classroomId_userId: { classroomId, userId: submitterId },
+        },
+      });
+      if (!isOwner && (!member || member.status !== 'Approved')) {
+        throw new AppError('You must be an approved member of this classroom to submit a project', 403);
+      }
+
       const existingUserSub = await prisma.submission.findFirst({
         where: { classroomId, submitterId },
       });
@@ -151,11 +171,28 @@ export class SubmissionService {
     return submissionRepository.listByClassroom(classroomId, params);
   }
 
-  async getSubmissionById(submissionId: string) {
+  async getSubmissionById(submissionId: string, currentUserId?: string) {
     const submission = await submissionRepository.findById(submissionId);
     if (!submission) {
       throw new AppError('Submission not found', 404);
     }
+
+    if (currentUserId) {
+      const isSubmitter = submission.submitterId === currentUserId;
+      const isTeamMember = submission.team?.members?.some(
+        (m: any) => m.userId === currentUserId || m.user?.id === currentUserId
+      );
+      const isOwner = submission.classroom.ownerId === currentUserId;
+      const isAssignedEvaluator = submission.assignedEvaluatorId === currentUserId;
+      const isClassroomEvaluator = submission.classroom.evaluators?.some(
+        (e: any) => e.evaluatorId === currentUserId
+      );
+
+      if (!isSubmitter && !isTeamMember && !isOwner && !isAssignedEvaluator && !isClassroomEvaluator) {
+        throw new AppError('You do not have permission to access this submission', 403);
+      }
+    }
+
     return submission;
   }
 
@@ -187,9 +224,10 @@ export class SubmissionService {
     }
 
     const isSubmitter = submission.submitterId === userId;
+    const isCaptain = submission.team?.captainId === userId;
     const isOwner = submission.classroom.ownerId === userId;
 
-    if (!isSubmitter && !isOwner) {
+    if (!isSubmitter && !isCaptain && !isOwner) {
       throw new AppError('You do not have permission to delete this submission', 403);
     }
 

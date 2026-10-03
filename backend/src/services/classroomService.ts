@@ -71,12 +71,39 @@ export class ClassroomService {
     return classroomRepository.list(userId, params);
   }
 
-  async getClassroomById(classroomId: string) {
+  async getClassroomById(classroomId: string, userId?: string) {
     const classroom = await classroomRepository.findById(classroomId);
     if (!classroom) {
       throw new AppError('Classroom not found', 404);
     }
-    return classroom;
+
+    let currentUserRole: 'OWNER' | 'EVALUATOR' | 'MEMBER' | null = null;
+    let currentUserStatus: string | null = null;
+
+    if (userId) {
+      if (classroom.ownerId === userId) {
+        currentUserRole = 'OWNER';
+        currentUserStatus = 'Approved';
+      } else {
+        const mem = classroom.members?.find((m: any) => m.userId === userId);
+        if (mem) {
+          currentUserRole = mem.role as any;
+          currentUserStatus = mem.status;
+        } else {
+          const evalMember = classroom.evaluators?.find((e: any) => e.evaluatorId === userId);
+          if (evalMember) {
+            currentUserRole = 'EVALUATOR';
+            currentUserStatus = 'Approved';
+          }
+        }
+      }
+    }
+
+    return {
+      ...classroom,
+      currentUserRole,
+      currentUserStatus,
+    };
   }
 
   async updateClassroom(classroomId: string, data: any) {

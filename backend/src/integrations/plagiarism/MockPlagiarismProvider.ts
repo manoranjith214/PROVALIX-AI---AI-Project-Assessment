@@ -3,9 +3,17 @@ import {
   CodeSimilarityResult,
   DocumentSimilarityResult,
   PlagiarismAnalysisResult,
+  PlagiarismProviderType,
 } from './PlagiarismProvider.interface';
 
 export class MockPlagiarismProvider implements PlagiarismProvider {
+  readonly providerName: string = 'MockPlagiarismProvider';
+  readonly providerType: PlagiarismProviderType = 'mock';
+
+  isAvailable(): boolean {
+    return true;
+  }
+
   async checkCodeSimilarity(_codeFilesOrArchive?: any[] | string): Promise<CodeSimilarityResult> {
     return {
       codeSimilarityPercentage: 0,
@@ -22,8 +30,8 @@ export class MockPlagiarismProvider implements PlagiarismProvider {
     };
   }
 
-  async analyzeFullSubmission(codeResource?: any, reportResource?: any): Promise<PlagiarismAnalysisResult> {
-    // Label clearly as DEMO/UNAVAILABLE. Do not fabricate matched sources.
+  async analyzeFullSubmission(_codeResource?: any, _reportResource?: any): Promise<PlagiarismAnalysisResult> {
+    // Explicitly labeled as development/demo mode only.
     return {
       codeSimilarity: 0,
       reportSimilarity: 0,
@@ -32,8 +40,10 @@ export class MockPlagiarismProvider implements PlagiarismProvider {
       matchedSources: [],
       deduction: 0,
       reason: undefined,
-      feedback: 'Plagiarism check service is currently in DEMO mode. Real cross-corpus plagiarism verification is unavailable.',
+      feedback: 'Plagiarism check completed using Mock provider (Development / Test mode only). Cross-corpus comparison is not active.',
       isDemoData: true,
+      providerName: this.providerName,
+      providerType: this.providerType,
     };
   }
 }

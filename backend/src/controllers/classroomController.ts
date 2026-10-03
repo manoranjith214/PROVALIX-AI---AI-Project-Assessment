@@ -37,7 +37,7 @@ export class ClassroomController {
 
   async getClassroomById(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const classroom = await classroomService.getClassroomById(req.params.id);
+      const classroom = await classroomService.getClassroomById(req.params.id, req.user?.id);
       return sendSuccess(res, classroom, 'Classroom details retrieved', 200);
     } catch (err) {
       next(err);

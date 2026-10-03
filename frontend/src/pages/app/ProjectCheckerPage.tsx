@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/common/PageHeader';
 import { Card } from '../../components/ui/Card';
@@ -26,48 +26,43 @@ export const ProjectCheckerPage: React.FC = () => {
   const { success, error: toastError } = useToast();
   const [rows, setRows] = useState<EvaluationRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<EvaluationRow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadProjects() {
-      setIsLoading(true);
-      try {
-        const backendProjects = await projectCheckerService.listProjects();
-        if (isMounted && Array.isArray(backendProjects)) {
-          const mapped: EvaluationRow[] = backendProjects.map(p => ({
-            id: p.id,
-            projectId: p.id,
-            title: p.title,
-            category: (p as any).category || p.domain || 'General Engineering',
-            date: p.createdAt,
-            overallScore: (p as any).aiEvaluation?.totalScore ?? p.overallScore ?? '-',
-            similarity: (p as any).plagiarism?.overallSimilarity ?? p.similarityScore ?? '-',
-            status: p.status === 'EVALUATED' ? 'Evaluated' : p.status,
-            isBackend: true,
-          }));
-          setRows(mapped);
-          setIsLoading(false);
-          return;
-        }
-      } catch (err) {
-        console.warn('[ProjectCheckerPage] Failed to load projects:', err);
+  const loadProjects = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const backendProjects = await projectCheckerService.listProjects();
+      if (Array.isArray(backendProjects)) {
+        const mapped: EvaluationRow[] = backendProjects.map(p => ({
+          id: p.id,
+          projectId: p.id,
+          title: p.title,
+          category: (p as any).category || p.domain || 'General Engineering',
+          date: p.createdAt,
+          overallScore: (p as any).aiEvaluation?.totalScore ?? p.overallScore ?? '-',
+          similarity: (p as any).plagiarism?.overallSimilarity ?? p.similarityScore ?? '-',
+          status: p.status === 'EVALUATED' ? 'Evaluated' : p.status,
+          isBackend: true,
+        }));
+        setRows(mapped);
+        return;
       }
-
-      if (isMounted) {
-        setRows([]);
-        setIsLoading(false);
-      }
+      setRows([]);
+    } catch (err: any) {
+      console.warn('[ProjectCheckerPage] Failed to load projects:', err);
+      setLoadError(err?.message || 'Failed to load project evaluations from server.');
+      setRows([]);
+    } finally {
+      setIsLoading(false);
     }
-
-    loadProjects();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
@@ -139,6 +134,13 @@ export const ProjectCheckerPage: React.FC = () => {
           <div className="flex items-center justify-center py-12 text-[#94A3B8] gap-2 text-xs">
             <Loader2 className="w-4 h-4 animate-spin text-[#7C3AED]" />
             Loading project evaluations...
+          </div>
+        ) : loadError ? (
+          <div className="p-8 text-center text-xs bg-rose-500/10 rounded-xl border border-rose-500/20 m-4 space-y-3">
+            <p className="text-rose-400 font-medium">{loadError}</p>
+            <Button variant="outline" size="sm" onClick={loadProjects}>
+              Retry Connection
+            </Button>
           </div>
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-xs text-[#94A3B8] bg-[#0F172A] rounded-xl border border-[#243047] m-4">

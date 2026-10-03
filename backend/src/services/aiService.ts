@@ -36,7 +36,7 @@ export class AIService {
    * Generates a conversational AI response via the configured AI provider with safe server-side logging and structured error classification.
    */
   async generateChatResponse(options: ChatAIRequestOptions): Promise<string> {
-    const { userId, userMessage, context, conversationHistory = [], detectedLanguage = 'english', detectedIntent = 'GENERAL' } = options;
+    const { userMessage, context, conversationHistory = [], detectedLanguage = 'english', detectedIntent = 'GENERAL' } = options;
 
     // 1. Validate payload
     const trimmedMessage = (userMessage || '').trim();
@@ -163,7 +163,7 @@ export class AIService {
       }
 
       // Safe error logging: Response status
-      console.error(`[AIService] Response status: ${statusCode} (Error: ${safeErrMsg})`);
+      console.error(`[AIService] Response status: ${statusCode} after ${durationMs}ms (Error: ${safeErrMsg})`);
 
       throw new AppError(userFacingMessage, statusCode, [], { errorCode, retryAfterSeconds });
     }

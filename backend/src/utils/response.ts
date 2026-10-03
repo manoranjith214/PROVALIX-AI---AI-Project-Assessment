@@ -28,7 +28,7 @@ export function sendError(
     success: false,
     message,
     errors,
-    ...(extra || {}),
+    ...(extra ? extra : {}),
   };
   return res.status(statusCode).json(payload);
 }

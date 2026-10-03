@@ -10,7 +10,7 @@ import { AuthenticatedRequest } from '../types';
 export class EvaluationController {
   async triggerAIEvaluation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const result = await aiEvaluationService.evaluateSubmission(req.params.id);
+      const result = await aiEvaluationService.evaluateSubmission(req.params.id, req.user!.id);
       return sendSuccess(res, result, 'AI evaluation completed successfully', 200);
     } catch (err) {
       next(err);
@@ -19,7 +19,7 @@ export class EvaluationController {
 
   async getAIEvaluation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const evaluation = await aiEvaluationService.getAIEvaluation(req.params.id);
+      const evaluation = await aiEvaluationService.getAIEvaluation(req.params.id, req.user!.id);
       return sendSuccess(res, evaluation, 'AI evaluation retrieved', 200);
     } catch (err) {
       next(err);

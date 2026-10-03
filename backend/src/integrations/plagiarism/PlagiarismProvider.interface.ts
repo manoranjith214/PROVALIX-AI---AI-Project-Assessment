@@ -1,3 +1,11 @@
+export type PlagiarismProviderType = 'mock' | 'real' | 'unavailable';
+
+export interface CodeSnippet {
+  path?: string;
+  content: string;
+  language?: string;
+}
+
 export interface CodeSimilarityResult {
   codeSimilarityPercentage: number;
   matchedSources: string[];
@@ -20,10 +28,15 @@ export interface PlagiarismAnalysisResult {
   reason?: string;
   feedback: string;
   isDemoData: boolean;
+  providerName: string;
+  providerType: PlagiarismProviderType;
 }
 
 export interface PlagiarismProvider {
-  checkCodeSimilarity(codeFilesOrArchive: any[] | string): Promise<CodeSimilarityResult>;
-  checkDocumentSimilarity(documentOrText: any | string): Promise<DocumentSimilarityResult>;
-  analyzeFullSubmission(codeResource?: any, reportResource?: any): Promise<PlagiarismAnalysisResult>;
+  readonly providerName: string;
+  readonly providerType: PlagiarismProviderType;
+  isAvailable(): boolean;
+  checkCodeSimilarity(codeFilesOrArchive?: any[] | string): Promise<CodeSimilarityResult>;
+  checkDocumentSimilarity(documentOrText?: any | string): Promise<DocumentSimilarityResult>;
+  analyzeFullSubmission(codeResourceOrInput?: any, reportResource?: any): Promise<PlagiarismAnalysisResult>;
 }

@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { teamController } from '../controllers/teamController';
 import { authenticate } from '../middleware/authMiddleware';
-import { upload } from '../middleware/uploadMiddleware';
+import { upload, verifyUploadedFile } from '../middleware/uploadMiddleware';
 
 const router = Router();
 
 router.use(authenticate);
 
 // Logo Upload
-router.post('/upload-logo', upload.single('logo'), (req, res, next) => teamController.uploadLogo(req, res, next));
-router.post('/:id/logo', upload.single('logo'), (req, res, next) => teamController.uploadLogo(req, res, next));
+router.post('/upload-logo', upload.single('logo'), verifyUploadedFile, (req, res, next) => teamController.uploadLogo(req, res, next));
+router.post('/:id/logo', upload.single('logo'), verifyUploadedFile, (req, res, next) => teamController.uploadLogo(req, res, next));
 
 // General Team Endpoints
 router.post('/', (req, res, next) => teamController.createTeam(req, res, next));

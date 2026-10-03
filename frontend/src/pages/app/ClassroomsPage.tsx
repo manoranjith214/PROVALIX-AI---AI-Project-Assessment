@@ -44,14 +44,17 @@ export const ClassroomsPage: React.FC = () => {
   const [selectedTeam, setSelectedTeam] = useState<any | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadClassrooms = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await classroomService.getClassrooms();
       setClassrooms(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[ClassroomsPage] Failed to load classrooms:', err);
+      setLoadError(err?.message || 'Failed to load classroom cohorts from server.');
     } finally {
       setLoading(false);
     }
@@ -191,6 +194,19 @@ export const ClassroomsPage: React.FC = () => {
           <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-4" />
           <p className="text-sm font-medium text-slate-400">Loading your classroom cohorts...</p>
         </div>
+      ) : loadError ? (
+        <Card className="p-12 text-center max-w-lg mx-auto space-y-4 border-rose-500/20 bg-rose-500/5">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <h3 className="text-base font-bold text-slate-100">Unable to Load Classrooms</h3>
+          <p className="text-xs text-rose-300/80">{loadError}</p>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <Button variant="primary" size="sm" onClick={loadClassrooms}>
+              Retry Connection
+            </Button>
+          </div>
+        </Card>
       ) : filtered.length === 0 ? (
         <Card className="p-12 text-center max-w-lg mx-auto space-y-4">
           <div className="w-12 h-12 rounded-2xl bg-[#0F172A] border border-[#243047] flex items-center justify-center mx-auto text-purple-400">

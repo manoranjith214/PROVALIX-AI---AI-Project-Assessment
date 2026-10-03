@@ -151,7 +151,14 @@ export const projectCheckerService = {
    * Retrieve PDF/Markdown report document
    */
   async getPdfReport(id: string): Promise<{ markdown: string; report: any }> {
-    return apiClient.get(`/project-checker/projects/${id}/report/pdf`);
+    return apiClient.get(`/project-checker/projects/${id}/report/pdf?format=json`);
+  },
+
+  /**
+   * Download the actual compiled PDF blob from backend
+   */
+  async downloadPdfReport(id: string): Promise<Blob> {
+    return apiClient.downloadBlob(`/project-checker/projects/${id}/report/pdf`);
   },
 
   /**

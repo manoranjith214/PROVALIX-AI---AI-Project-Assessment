@@ -32,10 +32,23 @@ const DEFAULT_VIVA_QUESTIONS = [
 ];
 
 export class FacultyEvaluationService {
-  async getVivaQuestions(submissionId: string) {
+  async getVivaQuestions(submissionId: string, userId?: string) {
     const submission = await submissionRepository.findById(submissionId);
     if (!submission) {
       throw new AppError('Submission not found', 404);
+    }
+
+    if (userId) {
+      const classroom = submission.classroom;
+      const isOwner = classroom.ownerId === userId;
+      const isAssigned = submission.assignedEvaluatorId === userId;
+      const isEvaluator = classroom.evaluators?.some((e: any) => e.evaluatorId === userId);
+      const isSubmitter = submission.submitterId === userId;
+      const isTeamMember = submission.team?.members?.some((m: any) => m.userId === userId || m.user?.id === userId);
+
+      if (!isOwner && !isAssigned && !isEvaluator && !isSubmitter && !isTeamMember) {
+        throw new AppError('You do not have permission to view viva questions for this submission', 403);
+      }
     }
 
     const existingEvaluation = await evaluationRepository.findFacultyEvaluationBySubmissionId(submissionId);
@@ -65,6 +78,16 @@ export class FacultyEvaluationService {
     const submission = await submissionRepository.findById(submissionId);
     if (!submission) {
       throw new AppError('Submission not found', 404);
+    }
+
+    // Role check: Only assigned evaluators or classroom owner can submit faculty evaluations
+    const classroom = submission.classroom;
+    const isOwner = classroom.ownerId === evaluatorId;
+    const isAssigned = submission.assignedEvaluatorId === evaluatorId;
+    const isEvaluator = classroom.evaluators?.some((e: any) => e.evaluatorId === evaluatorId);
+
+    if (!isOwner && !isAssigned && !isEvaluator) {
+      throw new AppError('Only assigned evaluators or the classroom owner can submit faculty evaluations', 403);
     }
 
     // Validate 5 questions

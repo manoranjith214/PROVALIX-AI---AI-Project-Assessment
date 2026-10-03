@@ -1,5 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { teamService } from '../services/teamService';
+import { getStorageProvider } from '../integrations/storage';
 import {
   createTeamSchema,
   updateTeamSchema,
@@ -41,7 +42,7 @@ export class TeamController {
 
   async getTeamById(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const team = await teamService.getTeamById(req.params.id);
+      const team = await teamService.getTeamById(req.params.id, req.user!.id);
       return sendSuccess(res, team, 'Team retrieved', 200);
     } catch (err) {
       next(err);
@@ -136,8 +137,9 @@ export class TeamController {
       if (!req.file) {
         return sendError(res, 'No image file was uploaded', 400);
       }
-      const logoUrl = `/uploads/${req.file.filename}`;
-      const result = await teamService.uploadLogo(req.params.id, req.user!.id, logoUrl);
+      const storage = getStorageProvider();
+      const stored = await storage.saveFile(req.file, 'team-logos', { isPrivate: false });
+      const result = await teamService.uploadLogo(req.params.id, req.user!.id, stored.url);
       return sendSuccess(res, result, 'Team logo uploaded successfully', 200);
     } catch (err) {
       next(err);

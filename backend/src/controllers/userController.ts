@@ -1,5 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { userService } from '../services/userService';
+import { getStorageProvider } from '../integrations/storage';
 import { updateProfileSchema, updatePasswordSchema } from '../validators/userValidator';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../types';
@@ -39,7 +40,9 @@ export class UserController {
       if (!req.file) {
         return sendError(res, 'No image file was uploaded', 400);
       }
-      const avatarUrl = `/uploads/${req.file.filename}`;
+      const storage = getStorageProvider();
+      const stored = await storage.saveFile(req.file, 'user-avatars', { isPrivate: false });
+      const avatarUrl = stored.url;
       const updated = await userService.updateProfile(req.user!.id, {
         profileImage: avatarUrl,
       });

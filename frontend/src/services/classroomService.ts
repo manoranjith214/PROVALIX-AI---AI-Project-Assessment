@@ -22,10 +22,17 @@ export function mapBackendClassroom(b: any): Classroom {
 
   const currentUser = tokenStorage.getCachedUser() || Storage.getCurrentUser();
   let userRole: 'OWNER' | 'EVALUATOR' | 'MEMBER' | undefined = undefined;
-  if (currentUser && b.ownerId === currentUser.id) {
+  if (b.currentUserRole) {
+    userRole = String(b.currentUserRole).toUpperCase() as any;
+  } else if (currentUser && b.ownerId === currentUser.id) {
     userRole = 'OWNER';
-  } else if (Array.isArray(b.members) && b.members.length > 0) {
-    userRole = (b.members[0].role || 'MEMBER').toUpperCase() as any;
+  } else if (currentUser && Array.isArray(b.evaluators) && b.evaluators.some((e: any) => (e.evaluatorId || e.userId || e.id) === currentUser.id)) {
+    userRole = 'EVALUATOR';
+  } else if (currentUser && Array.isArray(b.members)) {
+    const myMembership = b.members.find((m: any) => (m.userId || m.user?.id) === currentUser.id);
+    if (myMembership) {
+      userRole = (myMembership.role || 'MEMBER').toUpperCase() as any;
+    }
   }
 
   const startDateStr = b.startDate ? new Date(b.startDate).toISOString().slice(0, 10) : '2026-03-20';
@@ -211,36 +218,7 @@ export const classroomService = {
     resources: ClassroomResourceRequirement[],
     options?: { logo?: string; minTeamSize?: number; maxTeamSize?: number }
   ): Promise<Classroom> {
-    try {
-      const createdSb = await supabaseDataService.createClassroom({
-        name,
-        description,
-        startDate,
-        submissionDeadline,
-        submissionMode,
-        resources,
-        logo: options?.logo,
-        minTeamSize: options?.minTeamSize,
-        maxTeamSize: options?.maxTeamSize,
-      });
-
-      apiClient.post('/classrooms', {
-        name,
-        description,
-        logo: options?.logo,
-        startDate,
-        deadline: submissionDeadline,
-        submissionMode,
-        minTeamSize: options?.minTeamSize,
-        maxTeamSize: options?.maxTeamSize,
-        resources,
-      }).catch(() => {});
-
-      return createdSb;
-    } catch (err: any) {
-      console.warn('[classroomService] Supabase createClassroom notice, trying backend:', err);
-    }
-
+    // Primary authoritative path: Backend API -> Prisma -> DB
     try {
       const res = await apiClient.post<any>('/classrooms', {
         name,
@@ -253,15 +231,27 @@ export const classroomService = {
         maxTeamSize: options?.maxTeamSize,
         resources,
       });
-      const created = res.data?.data || res.data;
-      if (created && created.id) {
-        return mapBackendClassroom(created);
+      const created = res.data?.data || res.data || res;
+      return mapBackendClassroom(created);
+    } catch (backendErr: any) {
+      console.warn('[classroomService] Backend createClassroom failed, falling back to Supabase:', backendErr);
+      try {
+        const createdSb = await supabaseDataService.createClassroom({
+          name,
+          description,
+          startDate,
+          submissionDeadline,
+          submissionMode,
+          resources,
+          logo: options?.logo,
+          minTeamSize: options?.minTeamSize,
+          maxTeamSize: options?.maxTeamSize,
+        });
+        return createdSb;
+      } catch (sbErr: any) {
+        const msg = backendErr?.response?.data?.message || backendErr?.message || sbErr?.message || 'Failed to create classroom';
+        throw new Error(msg);
       }
-      return mapBackendClassroom(res);
-    } catch (err: any) {
-      console.warn('[classroomService] Backend createClassroom failed:', err);
-      const msg = err.response?.data?.message || err.message || 'Failed to create classroom';
-      throw new Error(msg);
     }
   },
 

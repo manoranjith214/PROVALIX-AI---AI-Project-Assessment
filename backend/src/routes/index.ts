@@ -12,6 +12,9 @@ import dashboardRoutes from './dashboardRoutes';
 import chatbotRoutes from './chatbotRoutes';
 import { prisma } from '../config/prisma';
 import { sendSuccess, sendError } from '../utils/response';
+import { authenticate } from '../middleware/authMiddleware';
+import { projectCheckerController } from '../controllers/projectCheckerController';
+import storageRoutes from './storageRoutes';
 
 const router = Router();
 
@@ -52,8 +55,14 @@ router.use('/teams', teamRoutes);
 router.use('/classrooms', classroomRoutes);
 router.use('/submissions', submissionRoutes);
 router.use('/project-checker', projectCheckerRoutes);
+router.use('/storage', storageRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/chatbot', chatbotRoutes);
+
+// Direct alias for standalone /projects/:id/report/pdf
+router.get('/projects/:id/report/pdf', authenticate, (req, res, next) =>
+  projectCheckerController.getPdfReport(req, res, next)
+);
 
 export default router;

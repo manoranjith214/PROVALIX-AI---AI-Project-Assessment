@@ -1,5 +1,4 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import jwt from 'jsonwebtoken';
 import { config } from './env';
 
 let supabaseClient: SupabaseClient | null = null;
@@ -46,33 +45,12 @@ export async function verifySupabaseToken(token: string) {
         const user = await res.json();
         if (user?.id) return user;
       }
-    } catch {
-      // Supabase network unreachable, try decoded JWT validation below
+    } catch (err: any) {
+      console.warn('[SupabaseAuth] Verification network attempt failed:', err?.message || err);
     }
   }
 
-  // Fallback: decode JWT and verify standard claims (expiry, aud, sub)
-  try {
-    const decoded = jwt.decode(token) as any;
-    if (
-      decoded &&
-      decoded.sub &&
-      decoded.exp &&
-      decoded.exp * 1000 > Date.now() &&
-      (decoded.aud === 'authenticated' || decoded.role === 'authenticated')
-    ) {
-      return {
-        id: decoded.sub,
-        email: decoded.email,
-        user_metadata: decoded.user_metadata || {},
-        app_metadata: decoded.app_metadata || {},
-        role: decoded.role || 'authenticated',
-      };
-    }
-  } catch {
-    // invalid token format
-  }
-
+  // Token was not verified by Supabase Auth API
   return null;
 }
 

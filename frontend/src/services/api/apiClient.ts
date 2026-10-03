@@ -204,4 +204,27 @@ export const apiClient = {
   delete<T = any>(endpoint: string, options?: RequestInit): Promise<T> {
     return request<T>(endpoint, { ...options, method: 'DELETE' });
   },
+
+  async downloadBlob(endpoint: string, options?: RequestInit): Promise<Blob> {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+    const token = await getOrRefreshAccessToken();
+    const headers: Record<string, string> = {
+      ...(options?.headers as Record<string, string>),
+    };
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (!response.ok) {
+      let msg = `Failed to download file (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson?.message) msg = errJson.message;
+      } catch {
+        // Ignore
+      }
+      throw new ApiError(msg, response.status);
+    }
+    return response.blob();
+  },
 };

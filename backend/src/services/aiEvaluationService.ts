@@ -1,16 +1,28 @@
 import { evaluationRepository } from '../repositories/evaluationRepository';
 import { submissionRepository } from '../repositories/submissionRepository';
 import { getAIProvider } from '../integrations/ai';
-import { defaultPlagiarismProvider } from '../integrations/plagiarism/MockPlagiarismProvider';
+import { runPlagiarismPipeline } from '../integrations/plagiarism';
 import { evidenceAnalyzer } from '../integrations/rubric/evidenceAnalyzer';
 import { notificationService } from './notificationService';
 import { AppError } from '../middleware/errorMiddleware';
 
 export class AIEvaluationService {
-  async evaluateSubmission(submissionId: string) {
+  async evaluateSubmission(submissionId: string, currentUserId?: string) {
     const submission = await submissionRepository.findById(submissionId);
     if (!submission) {
       throw new AppError('Submission not found', 404);
+    }
+
+    // Role check: Only assigned evaluators or the classroom owner can trigger AI evaluation
+    if (currentUserId) {
+      const classroom = submission.classroom;
+      const isOwner = classroom.ownerId === currentUserId;
+      const isAssigned = submission.assignedEvaluatorId === currentUserId;
+      const isEvaluator = classroom.evaluators?.some((e: any) => e.evaluatorId === currentUserId);
+
+      if (!isOwner && !isAssigned && !isEvaluator) {
+        throw new AppError('Only the classroom owner or assigned evaluators can trigger AI evaluation', 403);
+      }
     }
 
     // Check classroom's required resources configuration
@@ -42,11 +54,13 @@ export class AIEvaluationService {
     // 2. EVIDENCE ANALYSIS (Requirement 4 & 5)
     const evidenceAnalysis = evidenceAnalyzer.extractAndClassifyEvidence(submission);
 
-    // 3. Run Plagiarism analysis first (separate stage)
-    const plagiarismResult = await defaultPlagiarismProvider.analyzeFullSubmission(
-      submission.githubUrl,
-      submission.description
-    );
+    // 3. Complete Plagiarism Pipeline: Extraction -> Normalization -> Provider -> Analysis
+    const plagiarismResult = await runPlagiarismPipeline({
+      submissionOrProject: submission,
+      resources: submission.resources,
+      githubUrl: submission.githubUrl || undefined,
+      description: submission.description || undefined,
+    });
 
     // 4. Run AI Evaluation (max 50, incorporating plagiarism deduction directly into finalScore)
     const aiProvider = getAIProvider();
@@ -82,7 +96,7 @@ export class AIEvaluationService {
       matchedSources: aiResult.matchedSources,
       feedback: aiResult.feedback,
       improvementPlan: aiResult.improvementPlan,
-      isDemoData: aiResult.isDemoData ?? false,
+      isDemoData: plagiarismResult.isDemoData || (aiResult.isDemoData ?? false),
     });
 
     // Update submission status
@@ -100,7 +114,25 @@ export class AIEvaluationService {
     return saved;
   }
 
-  async getAIEvaluation(submissionId: string) {
+  async getAIEvaluation(submissionId: string, currentUserId?: string) {
+    if (currentUserId) {
+      const submission = await submissionRepository.findById(submissionId);
+      if (!submission) {
+        throw new AppError('Submission not found', 404);
+      }
+
+      const classroom = submission.classroom;
+      const isOwner = classroom.ownerId === currentUserId;
+      const isAssigned = submission.assignedEvaluatorId === currentUserId;
+      const isEvaluator = classroom.evaluators?.some((e: any) => e.evaluatorId === currentUserId);
+      const isSubmitter = submission.submitterId === currentUserId;
+      const isTeamMember = submission.team?.members?.some((m: any) => m.userId === currentUserId || m.user?.id === currentUserId);
+
+      if (!isOwner && !isAssigned && !isEvaluator && !isSubmitter && !isTeamMember) {
+        throw new AppError('You do not have permission to view this evaluation', 403);
+      }
+    }
+
     const evaluation = await evaluationRepository.findAIEvaluationBySubmissionId(submissionId);
     if (!evaluation) {
       throw new AppError('AI evaluation not found for this submission', 404);
