@@ -45,6 +45,26 @@ export function requireClassroomRole(allowedRoles: RoleType[]) {
       });
 
       if (!member) {
+        // Also check if assigned via ClassroomEvaluator
+        const evaluator = await prisma.classroomEvaluator.findFirst({
+          where: {
+            classroomId,
+            evaluatorId: req.user.id,
+          },
+        });
+
+        if (evaluator) {
+          req.classroomMemberRole = 'EVALUATOR';
+          if (!allowedRoles.includes('EVALUATOR')) {
+            return sendError(
+              res,
+              `Access denied. Requires one of the following classroom roles: ${allowedRoles.join(', ')}`,
+              403
+            );
+          }
+          return next();
+        }
+
         return sendError(res, 'You are not a member of this classroom.', 403);
       }
 

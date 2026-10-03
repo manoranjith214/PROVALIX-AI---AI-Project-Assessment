@@ -82,7 +82,11 @@ export class ClassroomRepository {
           owner: { select: safeUserSelect },
           members: {
             where: { userId },
-            select: { role: true },
+            select: { userId: true, role: true, status: true },
+          },
+          evaluators: {
+            where: { evaluatorId: userId },
+            select: { evaluatorId: true },
           },
           _count: {
             select: {

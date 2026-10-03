@@ -68,7 +68,30 @@ export class ClassroomService {
   }
 
   async listClassrooms(userId: string, params: PaginationParams) {
-    return classroomRepository.list(userId, params);
+    const result = await classroomRepository.list(userId, params);
+    const classrooms = result.classrooms.map((c: any) => {
+      let currentUserRole: 'OWNER' | 'EVALUATOR' | 'MEMBER' = 'MEMBER';
+      let currentUserStatus = 'Approved';
+
+      if (c.ownerId === userId) {
+        currentUserRole = 'OWNER';
+        currentUserStatus = 'Approved';
+      } else if (c.evaluators && c.evaluators.length > 0) {
+        currentUserRole = 'EVALUATOR';
+        currentUserStatus = 'Approved';
+      } else if (c.members && c.members.length > 0) {
+        currentUserRole = (c.members[0].role?.toUpperCase() as any) || 'MEMBER';
+        currentUserStatus = c.members[0].status || 'Approved';
+      }
+
+      return {
+        ...c,
+        currentUserRole,
+        currentUserStatus,
+      };
+    });
+
+    return { total: result.total, classrooms };
   }
 
   async getClassroomById(classroomId: string, userId?: string) {

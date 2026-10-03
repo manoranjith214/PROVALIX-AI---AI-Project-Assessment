@@ -16,11 +16,8 @@ export const evaluationService = {
         reason: evaluation.reason,
         feedback: evaluation.feedback,
       });
-      const data = res.data?.data || res.data;
-      if (data && data.id) {
-        return mapBackendSubmission(data);
-      }
-      return mapBackendSubmission(res);
+      const data = res?.id ? res : (res?.data || res);
+      return mapBackendSubmission(data);
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'Failed to submit faculty evaluation';
       throw new Error(msg);
@@ -34,16 +31,14 @@ export const evaluationService = {
     try {
       if (verification.status === 'Approved') {
         const res = await apiClient.post<any>(`/submissions/${submissionId}/verify`);
-        const data = res.data?.data || res.data;
-        if (data && data.id) return mapBackendSubmission(data);
-        return mapBackendSubmission(res);
+        const data = res?.id ? res : (res?.data || res);
+        return mapBackendSubmission(data);
       } else if (verification.status === 'Returned') {
         const res = await apiClient.post<any>(`/submissions/${submissionId}/return`, {
           returnReason: verification.returnReason || 'Revision requested by reviewer',
         });
-        const data = res.data?.data || res.data;
-        if (data && data.id) return mapBackendSubmission(data);
-        return mapBackendSubmission(res);
+        const data = res?.id ? res : (res?.data || res);
+        return mapBackendSubmission(data);
       }
       throw new Error('Unsupported verification status');
     } catch (err: any) {
@@ -55,7 +50,7 @@ export const evaluationService = {
   async getLeaderboard(classroomId: string): Promise<any> {
     try {
       const res = await apiClient.get<any>(`/classrooms/${classroomId}/leaderboard`);
-      return res.data?.data || res.data;
+      return res?.data || res;
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'Failed to fetch leaderboard';
       throw new Error(msg);
@@ -65,7 +60,7 @@ export const evaluationService = {
   async getClassroomVerifications(classroomId: string): Promise<ClassroomSubmission[]> {
     try {
       const res = await apiClient.get<any>(`/classrooms/${classroomId}/verification`);
-      const list = res.data?.data || res.data;
+      const list = Array.isArray(res) ? res : (res?.data || []);
       if (Array.isArray(list)) {
         return list.map(mapBackendSubmission);
       }

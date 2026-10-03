@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { StandaloneAIEvaluation, ProjectDetails } from '../types';
+import { projectCheckerService } from './projectCheckerService';
+import { tokenStorage } from './api/tokenStorage';
 
 export interface SupabaseProjectReportRow {
   id: string;
@@ -55,8 +57,9 @@ async function getAuthenticatedUser() {
 
 export const projectReportService = {
   /**
-   * Fetches project reports strictly for the current authenticated Supabase user.
-   * Direct Supabase query to `project_reports` table with RLS.
+   * Fetches project reports strictly for the current authenticated user.
+   * Primary: Backend PostgreSQL/Prisma API
+   * Secondary fallback: Supabase `project_reports` table
    */
   async getReports(options: GetReportsOptions = {}): Promise<PaginatedReportResult> {
     const {
@@ -67,6 +70,52 @@ export const projectReportService = {
       sortBy = 'newest',
     } = options;
 
+    // 1. Primary: Provalix backend API (PostgreSQL/Prisma)
+    if (tokenStorage.getAccessToken()) {
+      try {
+        const backendResult = await projectCheckerService.listProjectsWithMeta({
+          page,
+          limit,
+          search,
+          status,
+          sortBy: sortBy.includes('title') ? 'title' : 'createdAt',
+          sortOrder: sortBy === 'oldest' || sortBy === 'title_asc' ? 'asc' : 'desc',
+        });
+
+        if (backendResult && Array.isArray(backendResult.projects)) {
+          const mappedReports: SupabaseProjectReportRow[] = backendResult.projects.map((p) => {
+            const score = p.overallScore ?? p.aiEvaluation?.overallScore ?? null;
+            const sim = p.similarityScore ?? p.plagiarism?.similarityScore ?? null;
+            return {
+              id: p.id,
+              user_id: p.userId,
+              project_title: p.title,
+              category: p.category || 'General Computing & AI',
+              status: p.status || 'Evaluated',
+              score: score !== null ? Number(score) : 0,
+              similarity: sim !== null ? Number(sim) : 0,
+              report_data: {
+                project: p,
+                evaluation: p.aiEvaluation,
+                plagiarism: p.plagiarism,
+              },
+              created_at: p.createdAt,
+              updated_at: p.updatedAt || p.createdAt,
+            };
+          });
+
+          return {
+            reports: mappedReports,
+            totalCount: backendResult.pagination?.total ?? mappedReports.length,
+            totalPages: backendResult.pagination?.totalPages ?? 1,
+          };
+        }
+      } catch (backendErr) {
+        console.warn('[projectReportService] Backend listProjectsWithMeta notice:', backendErr);
+      }
+    }
+
+    // 2. Secondary fallback: Supabase
     const user = await getAuthenticatedUser();
 
     if (!user) {
@@ -138,6 +187,29 @@ export const projectReportService = {
    * Fetches a single project report by ID for the authenticated user.
    */
   async getReportById(id: string): Promise<SupabaseProjectReportRow | null> {
+    if (tokenStorage.getAccessToken()) {
+      try {
+        const rep = await projectCheckerService.getReport(id);
+        if (rep && (rep.project || rep.id)) {
+          const p = rep.project || rep;
+          return {
+            id: p.id,
+            user_id: p.userId,
+            project_title: p.title,
+            category: p.category || 'General Computing & AI',
+            status: p.status || 'Evaluated',
+            score: p.overallScore ?? rep.aiEvaluation?.overallScore ?? 0,
+            similarity: p.similarityScore ?? rep.plagiarism?.similarityScore ?? 0,
+            report_data: rep,
+            created_at: p.createdAt || new Date().toISOString(),
+            updated_at: p.updatedAt || p.createdAt || new Date().toISOString(),
+          };
+        }
+      } catch (backendErr) {
+        // Fallback to Supabase
+      }
+    }
+
     const user = await getAuthenticatedUser();
 
     if (!user) {
@@ -202,6 +274,31 @@ export const projectReportService = {
    * Updates an existing report title or fields for the current user.
    */
   async updateReport(id: string, updates: Partial<CreateReportInput>): Promise<SupabaseProjectReportRow> {
+    if (tokenStorage.getAccessToken()) {
+      try {
+        const updated = await projectCheckerService.updateProject(id, {
+          title: updates.project_title,
+          category: updates.category,
+        });
+        if (updated) {
+          return {
+            id: updated.id,
+            user_id: updated.userId,
+            project_title: updated.title,
+            category: updated.category || 'General Computing & AI',
+            status: updated.status || 'Evaluated',
+            score: updated.overallScore ?? 0,
+            similarity: updated.similarityScore ?? 0,
+            report_data: { project: updated },
+            created_at: updated.createdAt,
+            updated_at: updated.updatedAt || updated.createdAt,
+          };
+        }
+      } catch {
+        // fallback
+      }
+    }
+
     const user = await getAuthenticatedUser();
 
     if (!user) {
@@ -239,6 +336,15 @@ export const projectReportService = {
    * Permanently deletes a report belonging to the current user.
    */
   async deleteReport(id: string): Promise<boolean> {
+    if (tokenStorage.getAccessToken()) {
+      try {
+        await projectCheckerService.deleteProject(id);
+        return true;
+      } catch {
+        // fallback
+      }
+    }
+
     const user = await getAuthenticatedUser();
 
     if (!user) {

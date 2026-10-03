@@ -54,16 +54,14 @@ export const teamService = {
     try {
       // 1. Authoritative Backend API
       const data = await apiClient.get<any[]>('/teams');
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         return data.map(this.mapBackendTeam);
       }
-      // 2. Supabase fallback
-      const sbTeams = await supabaseDataService.getTeams();
-      if (sbTeams && sbTeams.length > 0) {
-        return sbTeams;
+      if (Array.isArray((data as any)?.data)) {
+        return (data as any).data.map(this.mapBackendTeam);
       }
     } catch (err) {
-      console.warn('[teamService] getTeams backend notice, checking Supabase fallback:', err);
+      console.warn('[teamService] getTeams backend error, checking Supabase fallback:', err);
       try {
         const sbTeams = await supabaseDataService.getTeams();
         if (sbTeams && sbTeams.length > 0) return sbTeams;
@@ -292,6 +290,7 @@ export const teamService = {
     try {
       const res = await apiClient.get<any[]>(`/classrooms/${classroomId}/team-participations`);
       if (Array.isArray(res)) return res;
+      if (Array.isArray((res as any)?.data)) return (res as any).data;
     } catch {
       // Return empty array
     }

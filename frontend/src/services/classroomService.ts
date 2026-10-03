@@ -169,42 +169,44 @@ export function mapBackendSubmission(s: any): ClassroomSubmission {
 export const classroomService = {
   async getClassrooms(params?: { search?: string; status?: string }): Promise<Classroom[]> {
     try {
-      // 1. Primary: Supabase PostgreSQL
-      const sbClassrooms = await supabaseDataService.getClassrooms();
-      if (sbClassrooms && sbClassrooms.length > 0) {
-        return sbClassrooms;
-      }
-
-      // 2. Fallback: Backend
       const queryParams = new URLSearchParams();
       if (params?.search) queryParams.append('search', params.search);
       if (params?.status) queryParams.append('status', params.status);
       const url = `/classrooms${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
       
       const res = await apiClient.get<any>(url);
-      const list = res.data?.data || res.data;
-      if (Array.isArray(list) && list.length > 0) {
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      if (Array.isArray(list)) {
         return list.map(mapBackendClassroom);
       }
-    } catch (err) {
-      console.warn('[classroomService] Failed to fetch classrooms notice:', err);
+    } catch (backendErr) {
+      console.warn('[classroomService] Backend classrooms fetch failed, checking fallback:', backendErr);
+      try {
+        const sbClassrooms = await supabaseDataService.getClassrooms();
+        if (sbClassrooms && sbClassrooms.length > 0) {
+          return sbClassrooms;
+        }
+      } catch {}
+      throw backendErr;
     }
     return [];
   },
 
   async getClassroomById(id: string): Promise<Classroom | undefined> {
     try {
-      const sbClassrooms = await supabaseDataService.getClassrooms();
-      const match = sbClassrooms.find(c => c.id === id);
-      if (match) return match;
-
       const res = await apiClient.get<any>(`/classrooms/${id}`);
-      const data = res.data?.data || res.data;
+      const data = res?.id ? res : (res?.data || res);
       if (data && data.id) {
         return mapBackendClassroom(data);
       }
-    } catch (err) {
-      console.warn(`[classroomService] Failed to fetch classroom ${id}:`, err);
+    } catch (backendErr) {
+      console.warn(`[classroomService] Backend fetch classroom ${id} failed, checking fallback:`, backendErr);
+      try {
+        const sbClassrooms = await supabaseDataService.getClassrooms();
+        const match = sbClassrooms.find(c => c.id === id);
+        if (match) return match;
+      } catch {}
+      throw backendErr;
     }
     return undefined;
   },
@@ -231,27 +233,11 @@ export const classroomService = {
         maxTeamSize: options?.maxTeamSize,
         resources,
       });
-      const created = res.data?.data || res.data || res;
+      const created = res?.id ? res : (res?.data || res);
       return mapBackendClassroom(created);
     } catch (backendErr: any) {
-      console.warn('[classroomService] Backend createClassroom failed, falling back to Supabase:', backendErr);
-      try {
-        const createdSb = await supabaseDataService.createClassroom({
-          name,
-          description,
-          startDate,
-          submissionDeadline,
-          submissionMode,
-          resources,
-          logo: options?.logo,
-          minTeamSize: options?.minTeamSize,
-          maxTeamSize: options?.maxTeamSize,
-        });
-        return createdSb;
-      } catch (sbErr: any) {
-        const msg = backendErr?.response?.data?.message || backendErr?.message || sbErr?.message || 'Failed to create classroom';
-        throw new Error(msg);
-      }
+      const msg = backendErr?.response?.data?.message || backendErr?.message || 'Failed to create classroom';
+      throw new Error(msg);
     }
   },
 
@@ -262,11 +248,8 @@ export const classroomService = {
         payload.deadline = updateData.submissionDeadline;
       }
       const res = await apiClient.put<any>(`/classrooms/${id}`, payload);
-      const data = res.data?.data || res.data;
-      if (data && data.id) {
-        return mapBackendClassroom(data);
-      }
-      return mapBackendClassroom(res);
+      const data = res?.id ? res : (res?.data || res);
+      return mapBackendClassroom(data);
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'Failed to update classroom configuration';
       throw new Error(msg);
@@ -287,7 +270,7 @@ export const classroomService = {
     const cleanCode = code.trim().toUpperCase();
     try {
       const res = await apiClient.post<any>('/classrooms/verify-code', { code: cleanCode });
-      const data = res.data?.data || res.data;
+      const data = res?.id ? res : (res?.data || res);
       return {
         success: true,
         data,
@@ -303,10 +286,10 @@ export const classroomService = {
     const cleanCode = code.trim().toUpperCase();
     try {
       const res = await apiClient.post<any>('/classrooms/join-code', { code: cleanCode, teamIdentifier });
-      const data = res.data?.data || res.data;
+      const data = res?.classroomId ? res : (res?.data || res);
       return {
         success: true,
-        message: res.data?.message || 'Join request submitted!',
+        message: data?.message || res?.message || 'Join request submitted!',
         classroomId: data?.classroomId,
         status: data?.status,
       };
@@ -319,7 +302,7 @@ export const classroomService = {
   async approveMember(classroomId: string, userId: string): Promise<{ success: boolean; message: string }> {
     try {
       const res = await apiClient.put<any>(`/classrooms/${classroomId}/members/${userId}/approve`);
-      return { success: true, message: res.data?.message || 'Participant approved!' };
+      return { success: true, message: res?.message || 'Participant approved!' };
     } catch (err: any) {
       return { success: false, message: err.response?.data?.message || err.message || 'Failed to approve member' };
     }
@@ -328,7 +311,7 @@ export const classroomService = {
   async rejectMember(classroomId: string, userId: string): Promise<{ success: boolean; message: string }> {
     try {
       const res = await apiClient.put<any>(`/classrooms/${classroomId}/members/${userId}/reject`);
-      return { success: true, message: res.data?.message || 'Participant rejected' };
+      return { success: true, message: res?.message || 'Participant rejected' };
     } catch (err: any) {
       return { success: false, message: err.response?.data?.message || err.message || 'Failed to reject member' };
     }
@@ -370,7 +353,7 @@ export const classroomService = {
       const res = await apiClient.post<any>(`/classrooms/${classroomId}/invite`, { email, role });
       return {
         success: true,
-        message: res.data?.message || `Invitation dispatched to ${email}`,
+        message: res?.message || `Invitation dispatched to ${email}`,
       };
     } catch (err: any) {
       const message = err.response?.data?.message || err.message || 'Failed to send classroom invitation.';
@@ -390,7 +373,7 @@ export const classroomService = {
       });
       return {
         success: true,
-        message: res.data?.message || 'Evaluator assigned successfully',
+        message: res?.message || 'Evaluator assigned successfully',
       };
     } catch (err: any) {
       const message = err.response?.data?.message || err.message || 'Failed to assign evaluator.';
@@ -411,7 +394,7 @@ export const classroomService = {
   async getSubmissionsByClassroom(classroomId: string): Promise<ClassroomSubmission[]> {
     try {
       const res = await apiClient.get<any>(`/classrooms/${classroomId}/submissions`);
-      const list = res.data?.data || res.data;
+      const list = Array.isArray(res) ? res : (res?.data || []);
       if (Array.isArray(list)) {
         return list.map(mapBackendSubmission);
       }
@@ -424,7 +407,7 @@ export const classroomService = {
   async getSubmissionById(id: string): Promise<ClassroomSubmission | undefined> {
     try {
       const res = await apiClient.get<any>(`/submissions/${id}`);
-      const data = res.data?.data || res.data;
+      const data = res?.id ? res : (res?.data || res);
       if (data && data.id) {
         return mapBackendSubmission(data);
       }
@@ -464,7 +447,7 @@ export const classroomService = {
       };
 
       const res = await apiClient.post<any>(`/classrooms/${submissionData.classroomId}/submissions`, payload);
-      const data = res.data?.data || res.data;
+      const data = res?.id ? res : (res?.data || res);
       if (data && data.id) {
         return mapBackendSubmission(data);
       }

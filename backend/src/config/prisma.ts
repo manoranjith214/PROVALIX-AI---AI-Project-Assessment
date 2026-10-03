@@ -13,17 +13,13 @@ const originalLookup = dns.lookup;
     options = {};
   }
   if (hostname === 'aws-0-ap-southeast-2.pooler.supabase.com') {
-    return originalLookup(hostname, options, (err, address, family) => {
-      if (err) return callback(err, address, family);
-      if (Array.isArray(address)) {
-        const filtered = address.filter((a: any) => (typeof a === 'string' ? a : a.address) !== '13.237.241.81');
-        return callback(null, filtered.length > 0 ? filtered : address, family);
-      }
-      if (address === '13.237.241.81') {
-        return callback(null, '3.106.102.114', family || 4);
-      }
-      return callback(null, address, family);
-    });
+    if (options && options.all) {
+      return callback(null, [
+        { address: '13.238.183.126', family: 4 },
+        { address: '3.106.102.114', family: 4 },
+      ]);
+    }
+    return callback(null, '13.238.183.126', 4);
   }
   return originalLookup(hostname, options, callback);
 };
@@ -61,9 +57,15 @@ if (databaseUrl) {
     const separator = databaseUrl.includes('?') ? '&' : '?';
     databaseUrl = `${databaseUrl}${separator}sslmode=require`;
   }
-  if (databaseUrl.includes('pooler.supabase.com') && !databaseUrl.includes('connection_limit=')) {
-    const separator = databaseUrl.includes('?') ? '&' : '?';
-    databaseUrl = `${databaseUrl}${separator}connection_limit=15&pool_timeout=30&connect_timeout=15`;
+  if (databaseUrl.includes('aws-0-ap-southeast-2.pooler.supabase.com')) {
+    databaseUrl = databaseUrl.replace('aws-0-ap-southeast-2.pooler.supabase.com', '13.238.183.126');
+  }
+
+  if (databaseUrl.includes('pooler.supabase.com') || databaseUrl.includes('13.238.183.126')) {
+    if (!databaseUrl.includes('connection_limit=')) {
+      const separator = databaseUrl.includes('?') ? '&' : '?';
+      databaseUrl = `${databaseUrl}${separator}connection_limit=15&pool_timeout=30&connect_timeout=15`;
+    }
   }
   process.env.DATABASE_URL = databaseUrl;
 }
