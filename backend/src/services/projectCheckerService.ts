@@ -1,3 +1,4 @@
+import 'multer';
 import { projectCheckerRepository } from '../repositories/projectCheckerRepository';
 import { getAIProvider } from '../integrations/ai';
 import { runPlagiarismPipeline } from '../integrations/plagiarism';

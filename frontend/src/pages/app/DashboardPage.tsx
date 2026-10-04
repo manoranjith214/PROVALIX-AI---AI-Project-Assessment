@@ -189,6 +189,12 @@ export const DashboardPage: React.FC = () => {
                   User ID: {user.permanentId}
                 </span>
               )}
+              {(user.permanentId === 'PRV-DEMO01' || user.email === 'demo@provalix.ai') && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold tracking-wider uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-950/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  DEMO ACCOUNT
+                </span>
+              )}
             </div>
             <p className="text-sm text-[#94A3B8] mt-1">
               {user.department || 'Computer Science'} • {user.college || 'Engineering Institute'}

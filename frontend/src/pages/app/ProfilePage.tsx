@@ -483,7 +483,7 @@ export const ProfilePage: React.FC = () => {
       <PageHeader
         title="Institutional Credentials & Profile"
         subtitle="Manage your Provalix institutional identity, academic standing, and contextual classroom roles. Your Permanent User ID is required for team rosters and classroom enrollments."
-        showDemoBadge={false}
+        showDemoBadge={user.permanentId === 'PRV-DEMO01' || user.email === 'demo@provalix.ai'}
         actions={
           <div className="flex items-center gap-2.5">
             <Button
@@ -606,6 +606,12 @@ export const ProfilePage: React.FC = () => {
                 <Badge variant="success" size="sm" icon={<span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1" />}>
                   Active Account
                 </Badge>
+                {(user.permanentId === 'PRV-DEMO01' || user.email === 'demo@provalix.ai') && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    DEMO ACCOUNT
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">

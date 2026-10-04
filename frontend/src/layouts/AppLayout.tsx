@@ -107,6 +107,12 @@ export const AppLayout: React.FC = () => {
               <span className="text-xs font-mono bg-[#0F172A] text-[#94A3B8] px-2.5 py-1 rounded-lg border border-[#243047] font-semibold">
                 ID: {user.permanentId}
               </span>
+              {(user.permanentId === 'PRV-DEMO01' || user.email === 'demo@provalix.ai') && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold tracking-wider uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  DEMO ACCOUNT
+                </span>
+              )}
             </div>
           </div>
 
@@ -179,6 +185,11 @@ export const AppLayout: React.FC = () => {
                       <p className="text-[11px] font-mono text-[#94A3B8] truncate font-semibold">
                         {user.permanentId}
                       </p>
+                      {(user.permanentId === 'PRV-DEMO01' || user.email === 'demo@provalix.ai') && (
+                        <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          DEMO ACCOUNT
+                        </span>
+                      )}
                     </div>
                   </div>
 

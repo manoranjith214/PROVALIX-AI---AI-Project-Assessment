@@ -1,3 +1,5 @@
+import 'multer';
+
 export interface StoredFileResult {
   fileName: string;
   originalName: string;

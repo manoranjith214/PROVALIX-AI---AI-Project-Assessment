@@ -294,7 +294,7 @@ STRICT OPERATIONAL RULES:
         });
       };
 
-      const maxRetries = 1;
+      const maxRetries = 3;
       let attempt = 0;
 
       while (attempt <= maxRetries) {
@@ -313,6 +313,10 @@ STRICT OPERATIONAL RULES:
             console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
 
             if (!quotaDetails.retryAllowed || attempt > maxRetries) {
+              if (process.env.ALLOW_AI_FALLBACK === 'true' || process.env.NODE_ENV !== 'production') {
+                console.warn('⚠️ [GeminiProvider]: Free tier daily quota exceeded on Google AI Studio. Gracefully falling back to local provider for development/testing.');
+                return await this.fallbackProvider.generateResponse(userMessage, context, conversationHistory, lang);
+              }
               throw new GeminiQuotaError(quotaDetails, errMsg);
             }
 
@@ -329,8 +333,9 @@ STRICT OPERATIONAL RULES:
             errMsg.includes('overloaded');
 
           if (isTransient && attempt <= maxRetries) {
-            console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered on ${this.modelName}, retrying after 2s backoff (attempt ${attempt}/${maxRetries})...`);
-            await new Promise((r) => setTimeout(r, 2000));
+            const backoffMs = attempt * 2000;
+            console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered on ${this.modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxRetries})...`);
+            await new Promise((r) => setTimeout(r, backoffMs));
             continue;
           }
 
@@ -384,7 +389,7 @@ STRICT OPERATIONAL RULES:
       });
     };
 
-    const maxRetries = 1;
+    const maxRetries = 3;
     let attempt = 0;
     let response;
 
@@ -419,8 +424,9 @@ STRICT OPERATIONAL RULES:
           errMsg.includes('overloaded');
 
         if (isTransient && attempt <= maxRetries) {
-          console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered in JSON eval on ${modelName}, retrying after 2s backoff (attempt ${attempt}/${maxRetries})...`);
-          await new Promise((r) => setTimeout(r, 2000));
+          const backoffMs = attempt * 2000;
+          console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered in JSON eval on ${modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxRetries})...`);
+          await new Promise((r) => setTimeout(r, backoffMs));
           continue;
         }
 
