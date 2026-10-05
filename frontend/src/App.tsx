@@ -144,6 +144,8 @@ export function App() {
                     {/* Project Checker */}
                     <Route path="/project-checker" element={<ProjectCheckerPage />} />
                     <Route path="/project-checker/new" element={<NewProjectCheckPage />} />
+                    <Route path="/project-checker/new/:projectId" element={<NewProjectCheckPage />} />
+                    <Route path="/project-checker/new/:projectId/resources" element={<NewProjectCheckPage />} />
                     
                     {/* Standalone Project Reports */}
                     <Route path="/project-reports" element={<ProjectReportsPage />} />

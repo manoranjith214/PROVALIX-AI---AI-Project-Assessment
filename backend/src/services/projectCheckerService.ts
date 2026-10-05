@@ -8,13 +8,41 @@ import { rubricEngine } from '../integrations/rubric/rubricEngine';
 import { sourceCodeAnalyzer } from './sourceCodeAnalyzer';
 import { validateAndCalculateProjectCheckerScores } from '../validators/aiEvaluationValidator';
 import { pdfReportGenerator } from './pdfReportGenerator';
+import { prisma } from '../config/prisma';
 import { PaginationParams } from '../types';
 import { AppError } from '../middleware/errorMiddleware';
 
 export class ProjectCheckerService {
   async createProject(userId: string, data: any) {
+    const { id, draftId, ...payload } = data;
+    const targetId = id || draftId;
+
+    if (targetId) {
+      const existing = await projectCheckerRepository.findById(targetId);
+      if (existing && existing.userId === userId && !existing.aiEvaluation) {
+        return this.updateProject(existing.id, userId, payload);
+      }
+    }
+
+    // Check if an existing unevaluated draft project exists for this user with the same title
+    if (payload.title) {
+      const existingDraft = await prisma.projectCheckerProject.findFirst({
+        where: {
+          userId,
+          title: { equals: payload.title.trim(), mode: 'insensitive' },
+          aiEvaluation: null,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      // Ensure demo project or evaluated project is never overwritten as a draft
+      if (existingDraft && !existingDraft.title.includes('Smart Campus Attendance')) {
+        return this.updateProject(existingDraft.id, userId, payload);
+      }
+    }
+
     return projectCheckerRepository.create({
-      ...data,
+      ...payload,
       userId,
     });
   }
@@ -24,6 +52,9 @@ export class ProjectCheckerService {
   }
 
   async getProjectById(projectId: string, userId: string) {
+    if (!projectId || typeof projectId !== 'string' || projectId.trim() === '') {
+      throw new AppError('Project not found', 404);
+    }
     const project = await projectCheckerRepository.findById(projectId);
     if (!project) {
       throw new AppError('Project not found', 404);

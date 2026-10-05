@@ -4,6 +4,7 @@ import { PaginationParams } from '../types';
 
 export class ProjectCheckerRepository {
   async findById(id: string) {
+    if (!id || typeof id !== 'string') return null;
     return prisma.projectCheckerProject.findUnique({
       where: { id },
       include: {
@@ -21,7 +22,11 @@ export class ProjectCheckerRepository {
 
     const where: any = {
       userId,
-      ...(params.status ? { status: params.status } : {}),
+      ...(params.status && params.status !== 'ALL'
+        ? params.status === 'EVALUATED'
+          ? { aiEvaluation: { isNot: null } }
+          : { aiEvaluation: null }
+        : {}),
       ...(search
         ? {
             OR: [
@@ -35,7 +40,7 @@ export class ProjectCheckerRepository {
 
     let orderBy: any = { createdAt: 'desc' };
     if (params.sortBy) {
-      if (['title', 'createdAt', 'updatedAt', 'status'].includes(params.sortBy)) {
+      if (['title', 'createdAt', 'updatedAt'].includes(params.sortBy)) {
         orderBy = { [params.sortBy]: params.sortOrder || 'desc' };
       }
     }
@@ -81,14 +86,14 @@ export class ProjectCheckerRepository {
         innovation: data.innovation,
         features: data.features,
         targetUsers: data.targetUsers,
-        technologies: data.technologies ? JSON.stringify(data.technologies) : undefined,
-        programmingLanguages: data.programmingLanguages ? JSON.stringify(data.programmingLanguages) : undefined,
+        technologies: data.technologies ? (typeof data.technologies === 'string' ? data.technologies : JSON.stringify(data.technologies)) : undefined,
+        programmingLanguages: data.programmingLanguages ? (typeof data.programmingLanguages === 'string' ? data.programmingLanguages : JSON.stringify(data.programmingLanguages)) : undefined,
         testingApproach: data.testingApproach,
         limitations: data.limitations,
         futureEnhancements: data.futureEnhancements,
         githubUrl: data.githubUrl,
         liveDemoUrl: data.liveDemoUrl,
-        externalLinks: data.externalLinks ? JSON.stringify(data.externalLinks) : undefined,
+        externalLinks: data.externalLinks ? (typeof data.externalLinks === 'string' ? data.externalLinks : JSON.stringify(data.externalLinks)) : undefined,
       },
       include: {
         user: { select: safeUserSelect },
@@ -109,14 +114,14 @@ export class ProjectCheckerRepository {
         innovation: data.innovation,
         features: data.features,
         targetUsers: data.targetUsers,
-        technologies: data.technologies ? JSON.stringify(data.technologies) : undefined,
-        programmingLanguages: data.programmingLanguages ? JSON.stringify(data.programmingLanguages) : undefined,
+        technologies: data.technologies ? (typeof data.technologies === 'string' ? data.technologies : JSON.stringify(data.technologies)) : undefined,
+        programmingLanguages: data.programmingLanguages ? (typeof data.programmingLanguages === 'string' ? data.programmingLanguages : JSON.stringify(data.programmingLanguages)) : undefined,
         testingApproach: data.testingApproach,
         limitations: data.limitations,
         futureEnhancements: data.futureEnhancements,
         githubUrl: data.githubUrl,
         liveDemoUrl: data.liveDemoUrl,
-        externalLinks: data.externalLinks ? JSON.stringify(data.externalLinks) : undefined,
+        externalLinks: data.externalLinks ? (typeof data.externalLinks === 'string' ? data.externalLinks : JSON.stringify(data.externalLinks)) : undefined,
       },
     });
   }

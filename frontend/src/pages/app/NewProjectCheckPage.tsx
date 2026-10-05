@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { PageHeader } from '../../components/common/PageHeader';
 import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -7,10 +7,9 @@ import { Textarea } from '../../components/ui/Textarea';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Progress } from '../../components/ui/Progress';
-import { projectService } from '../../services/projectService';
 import { projectCheckerService } from '../../services/projectCheckerService';
 import { projectReportService } from '../../services/projectReportService';
-import { StandaloneAIEvaluation, ProjectDetails } from '../../types';
+import { StandaloneAIEvaluation } from '../../types';
 import { validateMeaningfulText, isValidGitHubUrl } from '../../utils/validationUtils';
 import { useToast } from '../../context/ToastContext';
 import { 
@@ -31,18 +30,38 @@ import {
   Loader2
 } from 'lucide-react';
 
+const safeParseJsonArray = (val: any): string => {
+  if (Array.isArray(val)) return val.join(', ');
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.join(', ');
+    } catch {
+      return val;
+    }
+  }
+  return '';
+};
+
 export const NewProjectCheckPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { projectId: routeProjectId } = useParams<{ projectId?: string }>();
   const { success, info, error } = useToast();
 
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
-  const [backendProjectId, setBackendProjectId] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(() => {
+    if (routeProjectId && location.pathname.includes('/resources')) return 2;
+    return 1;
+  });
+  const [backendProjectId, setBackendProjectId] = useState<string | null>(routeProjectId || null);
+  const [isLoadingProject, setIsLoadingProject] = useState<boolean>(false);
   const [isCreatingProject, setIsCreatingProject] = useState<boolean>(false);
+  const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
   const [isSavingReport, setIsSavingReport] = useState<boolean>(false);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
 
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const activeUploadCategory = React.useRef<string>('other');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeUploadCategory = useRef<string>('other');
 
   // Form State - Starts completely empty
   const [formData, setFormData] = useState({
@@ -83,6 +102,95 @@ export const NewProjectCheckPage: React.FC = () => {
   // Evaluation results state
   const [generatedEvaluation, setGeneratedEvaluation] = useState<StandaloneAIEvaluation | null>(null);
 
+  // Restore project state from database if route contains projectId or on page refresh
+  const loadProject = useCallback(async (id: string) => {
+    setIsLoadingProject(true);
+    try {
+      const project = await projectCheckerService.getProjectById(id);
+      if (!project) {
+        error('Project could not be found.');
+        navigate('/project-checker/new', { replace: true });
+        return;
+      }
+
+      setBackendProjectId(project.id);
+      sessionStorage.setItem('current_project_checker_id', project.id);
+
+      setFormData({
+        title: project.title || '',
+        category: project.category || '',
+        description: project.description || '',
+        problemStatement: project.problemStatement || '',
+        proposedSolution: project.proposedSolution || '',
+        objectives: project.objectives || '',
+        innovation: project.innovation || '',
+        features: project.features || '',
+        targetUsers: project.targetUsers || '',
+        technologies: safeParseJsonArray(project.technologies),
+        programmingLanguages: safeParseJsonArray(project.programmingLanguages),
+        testingApproach: project.testingApproach || '',
+        limitations: project.limitations || '',
+        futureEnhancements: project.futureEnhancements || '',
+        githubUrl: project.githubUrl || '',
+        liveDemoUrl: project.liveDemoUrl || '',
+      });
+
+      if (Array.isArray(project.resources) && project.resources.length > 0) {
+        setUploadedResources(prev => {
+          const next = { ...prev };
+          for (const r of project.resources) {
+            const key = r.type && r.type in next ? r.type : 'other';
+            next[key] = {
+              uploaded: true,
+              name: r.name || `${key}-file`,
+              size: r.size || '1.0 MB',
+            };
+          }
+          if (project.githubUrl) {
+            next.github = { uploaded: true, name: project.githubUrl, size: 'Repo URL' };
+          }
+          return next;
+        });
+      } else if (project.githubUrl) {
+        setUploadedResources(prev => ({
+          ...prev,
+          github: { uploaded: true, name: project.githubUrl, size: 'Repo URL' },
+        }));
+      }
+
+      if (project.aiEvaluation) {
+        const mapped = projectCheckerService.mapBackendReport(project);
+        setGeneratedEvaluation(mapped.evaluation);
+        setCurrentStep(4);
+      } else if (location.pathname.includes('/resources')) {
+        setCurrentStep(2);
+      }
+    } catch (err: any) {
+      const status = err?.status || err?.statusCode;
+      if (status === 404) {
+        error('Project could not be found.');
+        navigate('/project-checker/new', { replace: true });
+      } else if (status === 401) {
+        error('Please sign in again.');
+      } else {
+        error(err?.message || 'Project could not be found.');
+      }
+    } finally {
+      setIsLoadingProject(false);
+    }
+  }, [navigate, location.pathname, error]);
+
+  useEffect(() => {
+    if (routeProjectId) {
+      loadProject(routeProjectId);
+    } else {
+      const savedId = sessionStorage.getItem('current_project_checker_id');
+      if (savedId && location.pathname.includes('/resources')) {
+        navigate(`/project-checker/new/${savedId}/resources`, { replace: true });
+      }
+    }
+  }, [routeProjectId, loadProject, location.pathname, navigate]);
+
   const triggerFileInput = (key: string) => {
     activeUploadCategory.current = key;
     fileInputRef.current?.click();
@@ -109,92 +217,94 @@ export const NewProjectCheckPage: React.FC = () => {
     if (!file) return;
 
     const key = activeUploadCategory.current;
-    if (backendProjectId) {
-      setUploadingKey(key);
-      try {
-        const res = await projectCheckerService.uploadResource(backendProjectId, file, key);
-        setUploadedResources(prev => ({
-          ...prev,
-          [key]: {
-            uploaded: true,
-            name: res.name || file.name,
-            size: res.size || `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-          },
-        }));
-        success(`Uploaded ${file.name}`);
-      } catch (err: any) {
-        info(err.message || 'File recorded locally');
-        setUploadedResources(prev => ({
-          ...prev,
-          [key]: {
-            uploaded: true,
-            name: file.name,
-            size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-          },
-        }));
-      } finally {
-        setUploadingKey(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    } else {
+
+    // Enforce persisted project ID before uploading
+    if (!backendProjectId) {
+      error('Please save the project before uploading resources.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setUploadingKey(key);
+    try {
+      const res = await projectCheckerService.uploadResource(backendProjectId, file, key);
       setUploadedResources(prev => ({
         ...prev,
         [key]: {
           uploaded: true,
-          name: file.name,
-          size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+          name: res.name || file.name,
+          size: res.size || `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         },
       }));
+      success(`Uploaded ${file.name}`);
+    } catch (err: any) {
+      const status = err?.status || err?.statusCode;
+      if (status === 401) {
+        error('Please sign in again.');
+      } else if (status === 404) {
+        error('Project could not be found.');
+      } else {
+        error(err?.message || `Failed to upload ${file.name} to server.`);
+      }
+    } finally {
+      setUploadingKey(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleProceedToUpload = async () => {
+  const saveProjectDetails = async (proceedToStep2: boolean = true): Promise<string | null> => {
     const titleVal = validateMeaningfulText(formData.title, 5, 'Project Title');
     if (!titleVal.isValid) {
       error(titleVal.error || 'Please provide a valid project title.');
-      return;
+      return null;
     }
 
     const categoryVal = validateMeaningfulText(formData.category, 3, 'Category / Domain');
     if (!categoryVal.isValid) {
       error(categoryVal.error || 'Please provide a valid project category.');
-      return;
+      return null;
     }
 
     const targetUsersVal = validateMeaningfulText(formData.targetUsers, 5, 'Target Users');
     if (!targetUsersVal.isValid) {
       error(targetUsersVal.error || 'Please provide a valid target users definition.');
-      return;
+      return null;
     }
 
     const descVal = validateMeaningfulText(formData.description, 30, 'Description / Abstract');
     if (!descVal.isValid) {
       error(descVal.error || 'Please provide a meaningful description of at least 30 characters.');
-      return;
+      return null;
     }
 
     const problemVal = validateMeaningfulText(formData.problemStatement, 30, 'Problem Statement');
     if (!problemVal.isValid) {
       error(problemVal.error || 'Please provide a meaningful problem statement of at least 30 characters.');
-      return;
+      return null;
     }
 
     const solutionVal = validateMeaningfulText(formData.proposedSolution, 30, 'Proposed Solution');
     if (!solutionVal.isValid) {
       error(solutionVal.error || 'Please provide a meaningful proposed solution of at least 30 characters.');
-      return;
+      return null;
     }
 
     if (formData.githubUrl && formData.githubUrl.trim()) {
       if (!isValidGitHubUrl(formData.githubUrl)) {
         error('Please provide a valid GitHub repository URL (e.g. https://github.com/owner/repo)');
-        return;
+        return null;
       }
     }
 
-    setIsCreatingProject(true);
+    if (proceedToStep2) {
+      setIsCreatingProject(true);
+    } else {
+      setIsSavingDraft(true);
+    }
+
     try {
       const payload = {
+        draftId: backendProjectId || undefined,
         title: formData.title.trim(),
         category: formData.category.trim(),
         description: formData.description.trim(),
@@ -213,29 +323,132 @@ export const NewProjectCheckPage: React.FC = () => {
         liveDemoUrl: formData.liveDemoUrl.trim() || undefined,
       };
 
+      let savedId: string;
       if (!backendProjectId) {
         const created = await projectCheckerService.createProject(payload);
-        setBackendProjectId(created.id);
+        if (!created || !created.id) {
+          throw new Error('Database did not return a valid project ID.');
+        }
+        savedId = String(created.id);
+        setBackendProjectId(savedId);
+        sessionStorage.setItem('current_project_checker_id', savedId);
         success('Project details saved to database.');
       } else {
-        await projectCheckerService.updateProject(backendProjectId, payload);
+        savedId = backendProjectId;
+        await projectCheckerService.updateProject(savedId, payload);
+        sessionStorage.setItem('current_project_checker_id', savedId);
+        success('Project details updated in database.');
       }
-      setCurrentStep(2);
+
+      if (proceedToStep2 && savedId) {
+        navigate(`/project-checker/new/${savedId}/resources`, { replace: true });
+        setCurrentStep(2);
+      }
+      return savedId;
     } catch (err: any) {
-      info(err.message || 'Draft saved locally.');
-      setCurrentStep(2);
+      const status = err?.status || err?.statusCode;
+      if (status === 401) {
+        error('Please sign in again.');
+      } else {
+        error(err?.message || 'Please save the project before uploading resources.');
+      }
+      // Do not navigate to Step 2 if save fails
+      return null;
     } finally {
       setIsCreatingProject(false);
+      setIsSavingDraft(false);
+    }
+  };
+
+  const handleStepClick = async (targetStep: 1 | 2 | 3 | 4) => {
+    if (targetStep === currentStep) return;
+
+    if (targetStep === 1) {
+      setCurrentStep(1);
+      return;
+    }
+
+    if (targetStep === 2) {
+      if (backendProjectId) {
+        setCurrentStep(2);
+      } else {
+        const savedId = await saveProjectDetails(true);
+        if (!savedId) {
+          error('Please save the project before uploading resources.');
+        }
+      }
+      return;
+    }
+
+    if (targetStep === 3) {
+      if (!backendProjectId) {
+        error('Please save the project before starting analysis.');
+        return;
+      }
+      setCurrentStep(2);
+      return;
+    }
+
+    if (targetStep === 4) {
+      if (generatedEvaluation) {
+        setCurrentStep(4);
+      } else {
+        info('Please complete evaluation to view report.');
+      }
     }
   };
 
   const startEvaluationScan = async () => {
-    // Evidence Gate (Requirement 3): Require at least one verified source-code evidence source
+    // 1. Persisted project ID check
+    if (!backendProjectId) {
+      error('Project could not be saved. Please return to Project Details and save again.');
+      setCurrentStep(1);
+      return;
+    }
+
+    // 2. Meaningful text check
+    const titleCheck = validateMeaningfulText(formData.title, 5, 'Project Title');
+    const descCheck = validateMeaningfulText(formData.description, 30, 'Description / Abstract');
+    const probCheck = validateMeaningfulText(formData.problemStatement, 30, 'Problem Statement');
+    const solCheck = validateMeaningfulText(formData.proposedSolution, 30, 'Proposed Solution');
+    if (!titleCheck.isValid) {
+      error(titleCheck.error || 'Project Title must contain meaningful text.');
+      return;
+    }
+    if (!descCheck.isValid) {
+      error(descCheck.error || 'Description must contain meaningful text.');
+      return;
+    }
+    if (!probCheck.isValid) {
+      error(probCheck.error || 'Problem Statement must contain meaningful text.');
+      return;
+    }
+    if (!solCheck.isValid) {
+      error(solCheck.error || 'Proposed Solution must contain meaningful text.');
+      return;
+    }
+
+    // 3. Evidence Gate: Require at least one verified source-code evidence source
     const hasSourceArchive = Boolean(uploadedResources.sourceCode?.uploaded && uploadedResources.sourceCode?.name);
     const hasGithub = isValidGitHubUrl(formData.githubUrl);
 
     if (!hasSourceArchive && !hasGithub) {
-      error('Evidence Gate: At least one source-code evidence source is required (uploaded source code archive or valid GitHub repository).');
+      error('Required project evidence is missing.');
+      return;
+    }
+
+    // 4. Verify project actually exists in backend before starting AI analysis
+    try {
+      await projectCheckerService.getProjectById(backendProjectId);
+    } catch (err: any) {
+      const status = err?.status || err?.statusCode;
+      if (status === 404) {
+        error('Project could not be found.');
+      } else if (status === 401) {
+        error('Please sign in again.');
+      } else {
+        error(err?.message || 'Project could not be found.');
+      }
       return;
     }
 
@@ -244,31 +457,49 @@ export const NewProjectCheckPage: React.FC = () => {
     setScanStage('Parsing AST & Scanning Source Code for syntax and licensing...');
 
     try {
-      if (backendProjectId) {
-        setScanProgress(30);
-        setScanStage('Scanning Technical Project Report and checking academic similarity...');
-        await projectCheckerService.runPlagiarismCheck(backendProjectId);
+      setScanProgress(30);
+      setScanStage('Scanning Technical Project Report and checking academic similarity...');
+      await projectCheckerService.runPlagiarismCheck(backendProjectId);
 
-        setScanProgress(60);
-        setScanStage('Executing Multi-Criteria Rubric Scoring across all 7 criteria (/100)...');
-        await projectCheckerService.runAIEvaluation(backendProjectId);
+      setScanProgress(60);
+      setScanStage('Executing Multi-Criteria Rubric Scoring across all 7 criteria (/100)...');
+      await projectCheckerService.runAIEvaluation(backendProjectId);
 
-        setScanProgress(90);
-        setScanStage('Finalizing Actionable Phased Improvement Plan and compiling report...');
-        const report = await projectCheckerService.getReport(backendProjectId);
+      setScanProgress(90);
+      setScanStage('Finalizing Actionable Phased Improvement Plan and compiling report...');
+      const report = await projectCheckerService.getReport(backendProjectId);
 
-        const mapped = projectCheckerService.mapBackendReport(report);
-        setGeneratedEvaluation(mapped.evaluation);
-        setScanProgress(100);
-        setCurrentStep(4);
-        success('AI Evaluation & Plagiarism analysis completed successfully!');
-      } else {
-        throw new Error('Project must be saved to database before evaluation.');
-      }
+      const mapped = projectCheckerService.mapBackendReport(report);
+      setGeneratedEvaluation(mapped.evaluation);
+      setScanProgress(100);
+      setCurrentStep(4);
+      success('AI Evaluation & Plagiarism analysis completed successfully!');
     } catch (err: any) {
       setCurrentStep(2);
       setScanProgress(0);
-      error(err?.message || 'AI evaluation service is currently unavailable. Please try again.');
+      const status = err?.status || err?.statusCode;
+      const msg = (err?.message || '').toLowerCase();
+
+      if (status === 401 || msg.includes('unauthorized') || msg.includes('sign in')) {
+        error('Please sign in again.');
+      } else if (status === 404 || msg.includes('not found')) {
+        error('Project could not be found.');
+      } else if (
+        status === 400 &&
+        (msg.includes('evidence') || msg.includes('insufficient') || msg.includes('source code') || msg.includes('missing'))
+      ) {
+        error('Required project evidence is missing.');
+      } else if (
+        status === 503 ||
+        status === 500 ||
+        msg.includes('unavailable') ||
+        msg.includes('ai provider') ||
+        msg.includes('gemini')
+      ) {
+        error('AI evaluation service is currently unavailable.');
+      } else {
+        error(err?.message || 'AI evaluation service is currently unavailable.');
+      }
     }
   };
 
@@ -361,23 +592,33 @@ export const NewProjectCheckPage: React.FC = () => {
           { num: 3, label: '3. Plagiarism & Scan' },
           { num: 4, label: '4. AI Score & Report' },
         ].map(step => (
-          <div
+          <button
             key={step.num}
-            className={`text-center pb-1 text-xs font-bold transition-all border-b-2 ${
+            type="button"
+            onClick={() => handleStepClick(step.num as 1 | 2 | 3 | 4)}
+            className={`text-center pb-1 text-xs font-bold transition-all border-b-2 cursor-pointer ${
               currentStep === step.num
                 ? 'border-[#7C3AED] text-[#7C3AED]'
                 : currentStep > step.num
                 ? 'border-emerald-400 text-emerald-400'
-                : 'border-transparent text-[#94A3B8]'
+                : 'border-transparent text-[#94A3B8] hover:text-slate-300'
             }`}
           >
             {step.label}
-          </div>
+          </button>
         ))}
       </div>
 
+      {/* Loading state when restoring project from database */}
+      {isLoadingProject && (
+        <Card className="p-12 text-center space-y-4 border-[#243047]">
+          <Loader2 className="w-8 h-8 animate-spin text-[#7C3AED] mx-auto" />
+          <p className="text-sm text-[#94A3B8]">Restoring saved project submission from database...</p>
+        </Card>
+      )}
+
       {/* STEP 1: PROJECT DETAILS */}
-      {currentStep === 1 && (
+      {!isLoadingProject && currentStep === 1 && (
         <Card className="p-6 sm:p-8 space-y-8 border-[#243047]">
           <div className="border-b border-[#1E293B] pb-4">
             <h3 className="text-lg font-bold text-[#F8FAFC]">Project Overview & Metadata</h3>
@@ -523,22 +764,30 @@ export const NewProjectCheckPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex justify-end pt-4 border-t border-[#1E293B]">
+          <div className="flex items-center justify-between pt-4 border-t border-[#1E293B]">
+            <Button
+              variant="outline"
+              size="md"
+              isLoading={isSavingDraft}
+              onClick={() => saveProjectDetails(false)}
+            >
+              Save Project
+            </Button>
             <Button
               variant="primary"
               size="md"
               isLoading={isCreatingProject}
-              onClick={handleProceedToUpload}
+              onClick={() => saveProjectDetails(true)}
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
-              Continue to Resource Upload
+              Save & Continue to Resource Upload
             </Button>
           </div>
         </Card>
       )}
 
       {/* STEP 2: RESOURCE UPLOAD */}
-      {currentStep === 2 && (
+      {!isLoadingProject && currentStep === 2 && (
         <Card className="p-6 sm:p-8 space-y-6 border-[#243047]">
           <input
             type="file"
@@ -626,7 +875,16 @@ export const NewProjectCheckPage: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between pt-4 border-t border-[#1E293B]">
-            <Button variant="outline" onClick={() => setCurrentStep(1)} leftIcon={<ArrowLeft className="w-4 h-4" />}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (backendProjectId) {
+                  navigate(`/project-checker/new/${backendProjectId}`, { replace: true });
+                }
+                setCurrentStep(1);
+              }}
+              leftIcon={<ArrowLeft className="w-4 h-4" />}
+            >
               Back to Details
             </Button>
             <Button
@@ -634,7 +892,7 @@ export const NewProjectCheckPage: React.FC = () => {
               onClick={startEvaluationScan}
               rightIcon={<Sparkles className="w-4 h-4" />}
             >
-              Start AI Plagiarism & Evaluation Scan
+              Start Analysis
             </Button>
           </div>
         </Card>
