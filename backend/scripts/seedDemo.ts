@@ -269,7 +269,8 @@ export async function seedDemoAccount(): Promise<SeedResult> {
   }
 
   // Mirror project and evaluation into public.projects and public.project_reports
-  const reportPayload = {
+  const fullReport = await projectCheckerService.getReport(project.id, sbUserId);
+  const reportPayload = fullReport || {
     project: {
       id: project.id,
       title: project.title,
@@ -289,11 +290,14 @@ export async function seedDemoAccount(): Promise<SeedResult> {
       resources: project.resources,
     },
     evaluation: project.aiEvaluation,
+    aiEvaluation: project.aiEvaluation,
     plagiarism: project.plagiarism,
+    overallScore: project.aiEvaluation?.totalScore ?? 63,
+    similarityScore: project.plagiarism?.overallSimilarity ?? 0,
   };
 
-  const projectScore = project.aiEvaluation?.totalScore || 85;
-  const projectSimilarity = project.plagiarism?.overallSimilarity || 2.4;
+  const projectScore = project.aiEvaluation?.totalScore ?? 63;
+  const projectSimilarity = project.plagiarism?.overallSimilarity ?? 0;
 
   // Insert into public.projects
   await prisma.$executeRaw`

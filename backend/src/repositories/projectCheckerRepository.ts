@@ -16,6 +16,18 @@ export class ProjectCheckerRepository {
     });
   }
 
+  async findDraftByTitle(userId: string, title: string) {
+    if (!userId || !title) return null;
+    return prisma.projectCheckerProject.findFirst({
+      where: {
+        userId,
+        title: { equals: title.trim(), mode: 'insensitive' },
+        aiEvaluation: null,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   async listByUser(userId: string, params: PaginationParams) {
     const { page, limit, search } = params;
     const skip = (page - 1) * limit;
@@ -139,10 +151,12 @@ export class ProjectCheckerRepository {
     url?: string;
     path?: string;
     size?: string;
-    uploadedById: string;
+    status?: string;
+    uploadedById?: string;
   }) {
+    const { uploadedById, ...resourceData } = data;
     return prisma.projectCheckerResource.create({
-      data,
+      data: resourceData,
     });
   }
 

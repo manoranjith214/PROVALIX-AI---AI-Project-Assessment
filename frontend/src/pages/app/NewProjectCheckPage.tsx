@@ -241,10 +241,14 @@ export const NewProjectCheckPage: React.FC = () => {
       const status = err?.status || err?.statusCode;
       if (status === 401) {
         error('Please sign in again.');
+      } else if (status === 403) {
+        error('Permission denied: You are not authorized to upload resources to this project.');
       } else if (status === 404) {
         error('Project could not be found.');
       } else {
-        error(err?.message || `Failed to upload ${file.name} to server.`);
+        error(err?.message && !err.message.includes('Invalid `prisma')
+          ? err.message 
+          : 'Unable to save the uploaded resource. Please try again.');
       }
     } finally {
       setUploadingKey(null);
@@ -289,9 +293,35 @@ export const NewProjectCheckPage: React.FC = () => {
       return null;
     }
 
+    // Check for duplicate copy-paste among desc, prob, sol
+    const descTrimmed = formData.description.trim().toLowerCase();
+    const probTrimmed = formData.problemStatement.trim().toLowerCase();
+    const solTrimmed = formData.proposedSolution.trim().toLowerCase();
+
+    if (descTrimmed === probTrimmed) {
+      error('Problem statement cannot be an identical copy of the project description.');
+      return null;
+    }
+    if (probTrimmed === solTrimmed) {
+      error('Proposed solution cannot be an identical copy of the problem statement.');
+      return null;
+    }
+    if (descTrimmed === solTrimmed) {
+      error('Proposed solution cannot be an identical copy of the project description.');
+      return null;
+    }
+
     if (formData.githubUrl && formData.githubUrl.trim()) {
       if (!isValidGitHubUrl(formData.githubUrl)) {
         error('Please provide a valid GitHub repository URL (e.g. https://github.com/owner/repo)');
+        return null;
+      }
+    }
+
+    if (formData.liveDemoUrl && formData.liveDemoUrl.trim()) {
+      const demoTrimmed = formData.liveDemoUrl.trim();
+      if (!/^https?:\/\/.+/i.test(demoTrimmed)) {
+        error('Please provide a valid Live Demo URL starting with http:// or https:// (e.g. https://yourproject.com)');
         return null;
       }
     }
@@ -347,10 +377,37 @@ export const NewProjectCheckPage: React.FC = () => {
       return savedId;
     } catch (err: any) {
       const status = err?.status || err?.statusCode;
+      const fieldErrors = Array.isArray(err?.errors) ? err.errors : [];
+
+      if (import.meta.env.DEV) {
+        console.warn('[NewProjectCheckPage] Project save error:', {
+          status,
+          message: err?.message,
+          errors: fieldErrors.map((e: any) => ({ field: e.field, message: e.message })),
+        });
+      }
+
       if (status === 401) {
         error('Please sign in again.');
+      } else if (status === 403) {
+        error('Permission denied: You are not authorized to modify this project.');
+      } else if (status === 409) {
+        error('A project with this title already exists. Please choose a different title.');
+      } else if (status === 400 || status === 422) {
+        if (fieldErrors.length > 0) {
+          const formatted = fieldErrors
+            .map((e: any) => e.message || `${e.field}: invalid value`)
+            .join('. ');
+          error(`Validation failed: ${formatted}`);
+        } else {
+          error(err?.message && err.message !== 'Validation error' 
+            ? err.message 
+            : 'Validation failed. Please verify that all required fields contain meaningful information.');
+        }
+      } else if (status === 500) {
+        error('Server or database error. Please try again.');
       } else {
-        error(err?.message || 'Please save the project before uploading resources.');
+        error(err?.message || 'Please check project details before saving.');
       }
       // Do not navigate to Step 2 if save fails
       return null;
@@ -478,27 +535,39 @@ export const NewProjectCheckPage: React.FC = () => {
       setCurrentStep(2);
       setScanProgress(0);
       const status = err?.status || err?.statusCode;
-      const msg = (err?.message || '').toLowerCase();
+      const rawMsg = err?.message || '';
+      const msg = rawMsg.toLowerCase();
+      const errorCode = err?.errorCode;
 
       if (status === 401 || msg.includes('unauthorized') || msg.includes('sign in')) {
         error('Please sign in again.');
+      } else if (status === 403) {
+        error('Permission denied: You are not authorized to analyze this project.');
       } else if (status === 404 || msg.includes('not found')) {
         error('Project could not be found.');
       } else if (
-        status === 400 &&
-        (msg.includes('evidence') || msg.includes('insufficient') || msg.includes('source code') || msg.includes('missing'))
+        status === 400 ||
+        msg.includes('evidence') ||
+        msg.includes('insufficient') ||
+        msg.includes('source code') ||
+        msg.includes('missing')
       ) {
-        error('Required project evidence is missing.');
+        error(rawMsg || 'Required project evidence is missing.');
       } else if (
+        errorCode === 'AI_PROVIDER_FAILED' ||
         status === 503 ||
-        status === 500 ||
-        msg.includes('unavailable') ||
+        msg.includes('gemini') ||
+        msg.includes('quota') ||
         msg.includes('ai provider') ||
-        msg.includes('gemini')
+        msg.includes('generativelanguage')
       ) {
         error('AI evaluation service is currently unavailable.');
+      } else if (msg.includes('resource') || msg.includes('upload') || msg.includes('storage')) {
+        error('Unable to verify uploaded resources. Please try again.');
+      } else if (status === 500) {
+        error(rawMsg && !rawMsg.includes('Prisma') ? rawMsg : 'A server or database error occurred during analysis.');
       } else {
-        error(err?.message || 'AI evaluation service is currently unavailable.');
+        error(rawMsg || 'Project analysis encountered an error. Please try again.');
       }
     }
   };

@@ -35,7 +35,13 @@ export function errorHandler(
       field: e.path.join('.'),
       message: e.message,
     }));
-    return sendError(res, 'Validation error', 422, formattedErrors);
+    const messageDetails = formattedErrors.map(e => e.message).join('; ');
+    return sendError(
+      res,
+      messageDetails ? `Validation failed: ${messageDetails}` : 'Validation error',
+      422,
+      formattedErrors
+    );
   }
 
   // Handle Custom AppError

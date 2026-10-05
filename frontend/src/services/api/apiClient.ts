@@ -153,7 +153,23 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
   }
 
   if (!response.ok || json.success === false) {
-    const errorMsg = json.message || (json.errors && json.errors[0]?.message) || `Request failed (${response.status})`;
+    let errorMsg = json.message;
+    if (json.errors && Array.isArray(json.errors) && json.errors.length > 0) {
+      const detailedErrors = json.errors
+        .map(e => (typeof e === 'string' ? e : e.message || `${e.field}: invalid`))
+        .filter(Boolean)
+        .join('; ');
+      if (detailedErrors) {
+        if (!errorMsg || errorMsg === 'Validation error') {
+          errorMsg = `Validation failed: ${detailedErrors}`;
+        } else if (!errorMsg.includes(detailedErrors)) {
+          errorMsg = `${errorMsg} (${detailedErrors})`;
+        }
+      }
+    }
+    if (!errorMsg) {
+      errorMsg = `Request failed (${response.status})`;
+    }
     const errorCode = (json as any).error;
     const retryAfterSeconds = (json as any).retryAfterSeconds;
     throw new ApiError(errorMsg, response.status, json.errors, json.data, errorCode, retryAfterSeconds);

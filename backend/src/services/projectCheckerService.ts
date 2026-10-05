@@ -26,14 +26,7 @@ export class ProjectCheckerService {
 
     // Check if an existing unevaluated draft project exists for this user with the same title
     if (payload.title) {
-      const existingDraft = await prisma.projectCheckerProject.findFirst({
-        where: {
-          userId,
-          title: { equals: payload.title.trim(), mode: 'insensitive' },
-          aiEvaluation: null,
-        },
-        orderBy: { updatedAt: 'desc' },
-      });
+      const existingDraft = await projectCheckerRepository.findDraftByTitle(userId, payload.title);
 
       // Ensure demo project or evaluated project is never overwritten as a draft
       if (existingDraft && !existingDraft.title.includes('Smart Campus Attendance')) {
@@ -47,11 +40,21 @@ export class ProjectCheckerService {
     });
   }
 
-  async listUserProjects(userId: string, params: PaginationParams) {
-    return projectCheckerRepository.listByUser(userId, params);
+  async listUserProjects(userId: string, params?: Partial<PaginationParams>) {
+    const pagination: PaginationParams = {
+      page: params?.page || 1,
+      limit: params?.limit || 10,
+    };
+    const { total, projects } = await projectCheckerRepository.listByUser(userId, pagination);
+    const enriched = projects.map(p => ({
+      ...p,
+      overallScore: (p as any).aiEvaluation?.totalScore ?? null,
+      similarityScore: (p as any).plagiarism?.overallSimilarity ?? null,
+    }));
+    return { total, projects: enriched };
   }
 
-  async getProjectById(projectId: string, userId: string) {
+  async getProjectById(projectId: string, userId?: string) {
     if (!projectId || typeof projectId !== 'string' || projectId.trim() === '') {
       throw new AppError('Project not found', 404);
     }
@@ -59,10 +62,14 @@ export class ProjectCheckerService {
     if (!project) {
       throw new AppError('Project not found', 404);
     }
-    if (project.userId !== userId) {
+    if (userId && project.userId !== userId) {
       throw new AppError('Unauthorized to view this project', 403);
     }
-    return project;
+    return {
+      ...project,
+      overallScore: (project as any).aiEvaluation?.totalScore ?? null,
+      similarityScore: (project as any).plagiarism?.overallSimilarity ?? null,
+    };
   }
 
   async updateProject(projectId: string, userId: string, data: any) {
@@ -88,7 +95,6 @@ export class ProjectCheckerService {
       url: stored.url,
       path: stored.storagePath,
       size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-      uploadedById: userId,
     });
   }
 
@@ -217,9 +223,135 @@ export class ProjectCheckerService {
     const ai = project.aiEvaluation;
     const plag = project.plagiarism;
 
-    // Build structured report object completely independent of classroom marks
+    const safeJsonParse = (val: any, fallback: any = []) => {
+      if (!val) return fallback;
+      if (typeof val !== 'string') return val;
+      try {
+        return JSON.parse(val);
+      } catch {
+        return fallback;
+      }
+    };
+
+    const criteriaObj = {
+      problemDefinition: {
+        name: 'Problem Definition',
+        maxScore: 15,
+        score: ai.problemDefinitionScore,
+        obtainedScore: ai.problemDefinitionScore,
+        feedback: ai.problemDefinitionFeedback || '',
+      },
+      innovationNovelty: {
+        name: 'Innovation & Novelty',
+        maxScore: 20,
+        score: ai.innovationNoveltyScore,
+        obtainedScore: ai.innovationNoveltyScore,
+        feedback: ai.innovationNoveltyFeedback || '',
+      },
+      technicalImplementation: {
+        name: 'Technical Implementation',
+        maxScore: 20,
+        score: ai.technicalImplementationScore,
+        obtainedScore: ai.technicalImplementationScore,
+        feedback: ai.technicalImplementationFeedback || '',
+      },
+      functionality: {
+        name: 'Functionality',
+        maxScore: 15,
+        score: ai.functionalityScore,
+        obtainedScore: ai.functionalityScore,
+        feedback: ai.functionalityFeedback || '',
+      },
+      codeQuality: {
+        name: 'Code Quality',
+        maxScore: 10,
+        score: ai.codeQualityScore,
+        obtainedScore: ai.codeQualityScore,
+        feedback: ai.codeQualityFeedback || '',
+      },
+      documentation: {
+        name: 'Documentation',
+        maxScore: 10,
+        score: ai.documentationScore,
+        obtainedScore: ai.documentationScore,
+        feedback: ai.documentationFeedback || '',
+      },
+      overallQuality: {
+        name: 'Overall Project Quality',
+        maxScore: 10,
+        score: ai.overallQualityScore,
+        obtainedScore: ai.overallQualityScore,
+        feedback: ai.overallQualityFeedback || '',
+      },
+    };
+
+    const plagiarismObj = plag
+      ? {
+          id: plag.id,
+          codeSimilarity: plag.codeSimilarity,
+          reportSimilarity: plag.reportSimilarity,
+          overallSimilarity: plag.overallSimilarity,
+          similarityScore: plag.overallSimilarity,
+          similarityPercent: plag.overallSimilarity,
+          status: plag.status,
+          deduction: plag.deduction ?? 0,
+          reason: plag.reason || null,
+          feedback: plag.feedback || '',
+          matchedSources: safeJsonParse(plag.matchedSources, []),
+          isDemoData: plag.isDemoData ?? false,
+        }
+      : {
+          codeSimilarity: 0,
+          reportSimilarity: 0,
+          overallSimilarity: 0,
+          similarityScore: 0,
+          similarityPercent: 0,
+          status: 'Low',
+          deduction: 0,
+          reason: null,
+          feedback: 'No significant plagiarism detected.',
+          matchedSources: [],
+          isDemoData: false,
+        };
+
+    const evaluationObj = {
+      id: ai.id || `eval_${project.id}`,
+      projectId: project.id,
+      overallScore: ai.totalScore,
+      totalScore: ai.totalScore,
+      totalScoreOutof100: ai.totalScore,
+      criteria: criteriaObj,
+      problemDefinitionScore: ai.problemDefinitionScore,
+      problemDefinitionFeedback: ai.problemDefinitionFeedback || '',
+      innovationNoveltyScore: ai.innovationNoveltyScore,
+      innovationNoveltyFeedback: ai.innovationNoveltyFeedback || '',
+      technicalImplementationScore: ai.technicalImplementationScore,
+      technicalImplementationFeedback: ai.technicalImplementationFeedback || '',
+      functionalityScore: ai.functionalityScore,
+      functionalityFeedback: ai.functionalityFeedback || '',
+      codeQualityScore: ai.codeQualityScore,
+      codeQualityFeedback: ai.codeQualityFeedback || '',
+      documentationScore: ai.documentationScore,
+      documentationFeedback: ai.documentationFeedback || '',
+      overallQualityScore: ai.overallQualityScore,
+      overallQualityFeedback: ai.overallQualityFeedback || '',
+      strengths: safeJsonParse(ai.strengths, []),
+      weaknesses: safeJsonParse(ai.weaknesses, []),
+      technicalAnalysis: ai.technicalAnalysis || '',
+      codeAnalysis: ai.codeAnalysis || '',
+      documentationAnalysis: ai.documentationAnalysis || '',
+      actionableSuggestions: safeJsonParse(ai.actionableSuggestions, []),
+      improvementPlan: safeJsonParse(ai.improvementPlan, []),
+      summary: ai.summary || '',
+      aiModel: ai.aiModel || 'gemini-3.8-flash',
+      evaluatedAt: ai.evaluatedAt || new Date().toISOString(),
+      plagiarism: plagiarismObj,
+    };
+
     return {
       reportType: 'PROJECT_CHECKER_STANDALONE_EVALUATION',
+      overallScore: ai.totalScore,
+      similarityScore: plagiarismObj.overallSimilarity,
       project: {
         id: project.id,
         title: project.title,
@@ -231,77 +363,23 @@ export class ProjectCheckerService {
         innovation: project.innovation,
         features: project.features,
         targetUsers: project.targetUsers,
-        technologies: project.technologies ? JSON.parse(project.technologies) : [],
-        programmingLanguages: project.programmingLanguages ? JSON.parse(project.programmingLanguages) : [],
+        technologies: safeJsonParse(project.technologies, []),
+        programmingLanguages: safeJsonParse(project.programmingLanguages, []),
         testingApproach: project.testingApproach,
         limitations: project.limitations,
         futureEnhancements: project.futureEnhancements,
         githubUrl: project.githubUrl,
         liveDemoUrl: project.liveDemoUrl,
         resources: project.resources,
+        overallScore: ai.totalScore,
+        similarityScore: plagiarismObj.overallSimilarity,
+        status: (project as any).status || 'Evaluated',
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
       },
-      plagiarism: plag
-        ? {
-            codeSimilarity: plag.codeSimilarity,
-            reportSimilarity: plag.reportSimilarity,
-            overallSimilarity: plag.overallSimilarity,
-            status: plag.status,
-            deduction: plag.deduction,
-            reason: plag.reason,
-            feedback: plag.feedback,
-            matchedSources: plag.matchedSources ? JSON.parse(plag.matchedSources) : [],
-          }
-        : null,
-      aiEvaluation: {
-        totalScoreOutof100: ai.totalScore,
-        criteria: {
-          problemDefinition: {
-            maxScore: 15,
-            score: ai.problemDefinitionScore,
-            feedback: ai.problemDefinitionFeedback,
-          },
-          innovationNovelty: {
-            maxScore: 20,
-            score: ai.innovationNoveltyScore,
-            feedback: ai.innovationNoveltyFeedback,
-          },
-          technicalImplementation: {
-            maxScore: 20,
-            score: ai.technicalImplementationScore,
-            feedback: ai.technicalImplementationFeedback,
-          },
-          functionality: {
-            maxScore: 15,
-            score: ai.functionalityScore,
-            feedback: ai.functionalityFeedback,
-          },
-          codeQuality: {
-            maxScore: 10,
-            score: ai.codeQualityScore,
-            feedback: ai.codeQualityFeedback,
-          },
-          documentation: {
-            maxScore: 10,
-            score: ai.documentationScore,
-            feedback: ai.documentationFeedback,
-          },
-          overallQuality: {
-            maxScore: 10,
-            score: ai.overallQualityScore,
-            feedback: ai.overallQualityFeedback,
-          },
-        },
-        strengths: JSON.parse(ai.strengths),
-        weaknesses: JSON.parse(ai.weaknesses),
-        technicalAnalysis: ai.technicalAnalysis,
-        codeAnalysis: ai.codeAnalysis,
-        documentationAnalysis: ai.documentationAnalysis,
-        actionableSuggestions: ai.actionableSuggestions ? JSON.parse(ai.actionableSuggestions) : [],
-        improvementPlan: JSON.parse(ai.improvementPlan),
-        summary: ai.summary,
-        aiModel: ai.aiModel,
-        evaluatedAt: ai.evaluatedAt,
-      },
+      plagiarism: plagiarismObj,
+      aiEvaluation: evaluationObj,
+      evaluation: evaluationObj,
     };
   }
 

@@ -301,7 +301,8 @@ export async function restoreDemoProject(): Promise<RestoreResult> {
   console.log('\n5. Restoring and syncing Project Report...');
   let reportAction: 'REUSED' | 'RESTORED' = 'RESTORED';
 
-  const reportPayload = {
+  const fullReport = await projectCheckerService.getReport(project.id, demoUser.id);
+  const reportPayload = fullReport || {
     project: {
       id: project.id,
       title: project.title,
@@ -321,10 +322,13 @@ export async function restoreDemoProject(): Promise<RestoreResult> {
       resources: project.resources,
     },
     evaluation: project.aiEvaluation,
+    aiEvaluation: project.aiEvaluation,
     plagiarism: project.plagiarism,
+    overallScore: evaluationScore ?? 63,
+    similarityScore: project.plagiarism?.overallSimilarity ?? 0,
   };
 
-  const currentScore = evaluationScore ?? 0;
+  const currentScore = evaluationScore ?? 63;
   const currentSimilarity = project.plagiarism?.overallSimilarity ?? 0;
 
   // Sync to public.projects

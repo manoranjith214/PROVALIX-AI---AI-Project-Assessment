@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import dns from 'dns';
 import {
   AIProvider,
   ProjectCheckerEvaluationResult,
@@ -8,6 +9,11 @@ import {
 } from './AIProvider.interface';
 import { MockAIProvider } from './MockAIProvider';
 import { config } from '../../config/env';
+
+// Prioritize IPv4 for Node DNS resolution to prevent socket hangs/resets on Windows & cloud environments
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
 
 export type GeminiQuotaType =
   | 'DAILY_FREE_TIER'
@@ -42,6 +48,94 @@ export class GeminiQuotaError extends Error {
     this.retryAfterSeconds = details.retryAfterSeconds;
     this.userFacingMessage = details.userFacingMessage;
   }
+}
+
+export function formatGeminiDiagnosticError(err: any): string {
+  const lines: string[] = ['[GEMINI ERROR]'];
+  lines.push(`name: ${err?.name || 'Error'}`);
+  lines.push(`message: ${err?.message || String(err || '')}`);
+
+  const status = err?.status || err?.statusCode;
+  if (status) {
+    lines.push(`status: ${status}`);
+  }
+
+  const cause = err?.cause;
+  if (cause) {
+    lines.push(`cause.name: ${cause.name || typeof cause}`);
+    lines.push(`cause.message: ${cause.message || String(cause)}`);
+    if (cause.code) {
+      lines.push(`cause.code: ${cause.code}`);
+    }
+    if (cause.syscall) {
+      lines.push(`cause.syscall: ${cause.syscall}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+export function isTransientGeminiError(err: any): boolean {
+  const status = err?.status || err?.statusCode;
+  const msg = (err?.message || '').toLowerCase();
+  const causeCode = (err?.cause?.code || '').toLowerCase();
+  const causeMsg = (err?.cause?.message || '').toLowerCase();
+
+  // Permanent errors that MUST NEVER be retried (Requirement 7)
+  if (status === 400 || status === 401 || status === 403 || status === 404) {
+    return false;
+  }
+  if (
+    msg.includes('api_key_invalid') ||
+    msg.includes('api key not valid') ||
+    msg.includes('invalid api key') ||
+    msg.includes('permission_denied') ||
+    msg.includes('not found') ||
+    msg.includes('unsupported model') ||
+    msg.includes('model not found')
+  ) {
+    return false;
+  }
+
+  // Quota 429
+  const quota = parseGeminiQuotaError(err);
+  if (quota.is429) {
+    return quota.retryAllowed;
+  }
+
+  // Transient 503 / 408 / 502 / 504 / high demand / overloaded
+  if (
+    status === 503 ||
+    status === 408 ||
+    status === 502 ||
+    status === 504 ||
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded')
+  ) {
+    return true;
+  }
+
+  // Temporary network failures / fetch failed / socket resets
+  if (
+    msg.includes('fetch failed') ||
+    err?.name === 'FetchError' ||
+    err?.name === 'AbortError' ||
+    causeCode.includes('econnreset') ||
+    causeCode.includes('etimedout') ||
+    causeCode.includes('enotfound') ||
+    causeCode.includes('eai_again') ||
+    causeCode.includes('econnrefused') ||
+    causeCode.includes('und_err') ||
+    causeMsg.includes('econnreset') ||
+    causeMsg.includes('etimedout') ||
+    causeMsg.includes('timeout')
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export function parseGeminiQuotaError(err: any): GeminiQuotaDetails {
@@ -171,11 +265,22 @@ export class GeminiProvider implements AIProvider {
       : config.ai.geminiModel;
     this.fallbackProvider = new MockAIProvider();
 
-    if (key && key.trim().length > 0) {
+    const hasKey = Boolean(key && key.trim().length > 0);
+    // Safe boolean check (Requirement 3 - never log actual key or length)
+    console.log(`[GEMINI CONFIG] API key present: ${hasKey}`);
+    console.log(`[GEMINI CONFIG] Model configured: ${this.modelName}`);
+
+    if (hasKey) {
       try {
-        this.client = new GoogleGenAI({ apiKey: key.trim() });
-      } catch (err) {
-        console.warn('⚠️ [GeminiProvider]: Failed to initialize GoogleGenAI client. Using MockAIProvider fallback.');
+        this.client = new GoogleGenAI({
+          apiKey: key!.trim(),
+          httpOptions: {
+            timeout: 30000,
+            retryOptions: { attempts: 1 },
+          },
+        });
+      } catch (err: any) {
+        console.warn('⚠️ [GeminiProvider]: Failed to initialize GoogleGenAI client:', err?.message || err);
         this.client = null;
       }
     }
@@ -294,52 +399,43 @@ STRICT OPERATIONAL RULES:
         });
       };
 
-      const maxRetries = 3;
+      // Bounded retry logic (Requirement 7): attempt 1, short backoff, attempt 2, then fail cleanly
+      const maxAttempts = 2;
       let attempt = 0;
 
-      while (attempt <= maxRetries) {
+      while (attempt < maxAttempts) {
         attempt++;
         try {
           response = await executeCall(this.modelName);
           break;
         } catch (firstErr: any) {
-          const errMsg = firstErr?.message || String(firstErr || '');
-          const quotaDetails = parseGeminiQuotaError(firstErr);
+          console.error(formatGeminiDiagnosticError(firstErr));
 
+          const quotaDetails = parseGeminiQuotaError(firstErr);
           if (quotaDetails.is429) {
-            // Safe backend logging (Requirement 11 - no secrets/tokens/keys logged)
             console.warn('[GeminiProvider] 429 quota exceeded');
             console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
             console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
 
-            if (!quotaDetails.retryAllowed || attempt > maxRetries) {
-              if (process.env.ALLOW_AI_FALLBACK === 'true' || process.env.NODE_ENV !== 'production') {
-                console.warn('⚠️ [GeminiProvider]: Free tier daily quota exceeded on Google AI Studio. Gracefully falling back to local provider for development/testing.');
-                return await this.fallbackProvider.generateResponse(userMessage, context, conversationHistory, lang);
-              }
-              throw new GeminiQuotaError(quotaDetails, errMsg);
+            if (!quotaDetails.retryAllowed || attempt >= maxAttempts) {
+              throw new GeminiQuotaError(quotaDetails, firstErr?.message);
             }
 
             const waitMs = Math.min((quotaDetails.retryAfterSeconds || 2) * 1000, 3000);
-            console.warn(`⚠️ [GeminiProvider]: Temporary rate limit, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})...`);
+            console.warn(`⚠️ [GeminiProvider]: Temporary rate limit, retrying in ${waitMs}ms (attempt ${attempt}/${maxAttempts})...`);
             await new Promise((r) => setTimeout(r, waitMs));
             continue;
           }
 
-          const isTransient =
-            errMsg.includes('503') ||
-            errMsg.includes('UNAVAILABLE') ||
-            errMsg.includes('high demand') ||
-            errMsg.includes('overloaded');
-
-          if (isTransient && attempt <= maxRetries) {
-            const backoffMs = attempt * 2000;
-            console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered on ${this.modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxRetries})...`);
-            await new Promise((r) => setTimeout(r, backoffMs));
-            continue;
+          const transient = isTransientGeminiError(firstErr);
+          if (!transient || attempt >= maxAttempts) {
+            throw firstErr;
           }
 
-          throw firstErr;
+          const backoffMs = attempt * 1500;
+          console.warn(`⚠️ [GeminiProvider]: Transient error encountered on ${this.modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+          await new Promise((r) => setTimeout(r, backoffMs));
+          continue;
         }
       }
 
@@ -354,8 +450,8 @@ STRICT OPERATIONAL RULES:
 
       throw new Error('AI provider returned an empty response.');
     } catch (err: any) {
-      console.warn('⚠️ [GeminiProvider]: Error during generateResponse:', err?.message || 'Unknown error');
-      // Requirement 6: Do not return fake/demo AI answers as a fallback when Gemini is active.
+      console.error(formatGeminiDiagnosticError(err));
+      // Requirement 13: Do not return fake/mock AI answers as a fallback when Gemini is active.
       if (config.ai.provider === 'gemini') {
         throw err;
       }
@@ -389,17 +485,18 @@ STRICT OPERATIONAL RULES:
       });
     };
 
-    const maxRetries = 3;
+    // Bounded retry logic (Requirement 7): attempt 1, short backoff, attempt 2, then fail cleanly
+    const maxAttempts = 2;
     let attempt = 0;
     let response;
 
-    while (attempt <= maxRetries) {
+    while (attempt < maxAttempts) {
       attempt++;
       try {
         response = await executeCall(modelName);
         break;
       } catch (firstErr: any) {
-        const errMsg = firstErr?.message || String(firstErr || '');
+        console.error(formatGeminiDiagnosticError(firstErr));
         const quotaDetails = parseGeminiQuotaError(firstErr);
 
         if (quotaDetails.is429) {
@@ -407,30 +504,25 @@ STRICT OPERATIONAL RULES:
           console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
           console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
 
-          if (!quotaDetails.retryAllowed || attempt > maxRetries) {
-            throw new GeminiQuotaError(quotaDetails, errMsg);
+          if (!quotaDetails.retryAllowed || attempt >= maxAttempts) {
+            throw new GeminiQuotaError(quotaDetails, firstErr?.message);
           }
 
           const waitMs = Math.min((quotaDetails.retryAfterSeconds || 2) * 1000, 3000);
-          console.warn(`⚠️ [GeminiProvider]: Temporary rate limit in JSON eval, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})...`);
+          console.warn(`⚠️ [GeminiProvider]: Temporary rate limit in JSON eval, retrying in ${waitMs}ms (attempt ${attempt}/${maxAttempts})...`);
           await new Promise((r) => setTimeout(r, waitMs));
           continue;
         }
 
-        const isTransient =
-          errMsg.includes('503') ||
-          errMsg.includes('UNAVAILABLE') ||
-          errMsg.includes('high demand') ||
-          errMsg.includes('overloaded');
-
-        if (isTransient && attempt <= maxRetries) {
-          const backoffMs = attempt * 2000;
-          console.warn(`⚠️ [GeminiProvider]: Transient spike / 503 encountered in JSON eval on ${modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxRetries})...`);
-          await new Promise((r) => setTimeout(r, backoffMs));
-          continue;
+        const transient = isTransientGeminiError(firstErr);
+        if (!transient || attempt >= maxAttempts) {
+          throw firstErr;
         }
 
-        throw firstErr;
+        const backoffMs = attempt * 1500;
+        console.warn(`⚠️ [GeminiProvider]: Transient error encountered in JSON eval on ${modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
       }
     }
 

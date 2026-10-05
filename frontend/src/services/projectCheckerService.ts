@@ -165,9 +165,9 @@ export const projectCheckerService = {
    * Helper to transform backend report payload into frontend ProjectDetails and StandaloneAIEvaluation
    */
   mapBackendReport(reportData: any): { project: ProjectDetails; evaluation: StandaloneAIEvaluation } {
-    const p = reportData.project;
-    const ai = reportData.aiEvaluation;
-    const plag = reportData.plagiarism || {
+    const p = reportData.project || reportData;
+    const ai = reportData.evaluation || reportData.aiEvaluation || reportData;
+    const plag = reportData.plagiarism || ai?.plagiarism || {
       codeSimilarity: 0,
       reportSimilarity: 0,
       overallSimilarity: 0,
@@ -212,51 +212,54 @@ export const projectCheckerService = {
       updatedAt: p.updatedAt || p.createdAt || new Date().toISOString(),
     };
 
+    const rawScore = ai?.overallScore ?? ai?.totalScoreOutof100 ?? ai?.totalScore ?? reportData?.overallScore ?? reportData?.score ?? p.overallScore ?? p.score;
+    const overallScore = rawScore !== null && rawScore !== undefined ? Number(rawScore) : 0;
+
     const evaluation: StandaloneAIEvaluation = {
       id: `eval_${p.id}`,
       projectId: p.id,
-      overallScore: ai?.totalScoreOutof100 ?? ai?.totalScore ?? 0,
+      overallScore,
       criteria: {
         problemDefinition: {
           name: 'Problem Definition',
           maxScore: 15,
-          obtainedScore: ai?.criteria?.problemDefinition?.score ?? ai?.problemDefinitionScore ?? 0,
+          obtainedScore: ai?.criteria?.problemDefinition?.obtainedScore ?? ai?.criteria?.problemDefinition?.score ?? (ai?.problemDefinitionScore !== undefined ? Number(ai.problemDefinitionScore) : (overallScore > 0 ? Math.round(overallScore * 0.15) : 0)),
           feedback: ai?.criteria?.problemDefinition?.feedback ?? ai?.problemDefinitionFeedback ?? '',
         },
         innovationNovelty: {
           name: 'Innovation & Novelty',
           maxScore: 20,
-          obtainedScore: ai?.criteria?.innovationNovelty?.score ?? ai?.innovationNoveltyScore ?? 0,
+          obtainedScore: ai?.criteria?.innovationNovelty?.obtainedScore ?? ai?.criteria?.innovationNovelty?.score ?? (ai?.innovationNoveltyScore !== undefined ? Number(ai.innovationNoveltyScore) : (overallScore > 0 ? Math.round(overallScore * 0.20) : 0)),
           feedback: ai?.criteria?.innovationNovelty?.feedback ?? ai?.innovationNoveltyFeedback ?? '',
         },
         technicalImplementation: {
           name: 'Technical Implementation',
           maxScore: 20,
-          obtainedScore: ai?.criteria?.technicalImplementation?.score ?? ai?.technicalImplementationScore ?? 0,
+          obtainedScore: ai?.criteria?.technicalImplementation?.obtainedScore ?? ai?.criteria?.technicalImplementation?.score ?? (ai?.technicalImplementationScore !== undefined ? Number(ai.technicalImplementationScore) : (overallScore > 0 ? Math.round(overallScore * 0.20) : 0)),
           feedback: ai?.criteria?.technicalImplementation?.feedback ?? ai?.technicalImplementationFeedback ?? '',
         },
         functionality: {
           name: 'Functionality',
           maxScore: 15,
-          obtainedScore: ai?.criteria?.functionality?.score ?? ai?.functionalityScore ?? 0,
+          obtainedScore: ai?.criteria?.functionality?.obtainedScore ?? ai?.criteria?.functionality?.score ?? (ai?.functionalityScore !== undefined ? Number(ai.functionalityScore) : (overallScore > 0 ? Math.round(overallScore * 0.15) : 0)),
           feedback: ai?.criteria?.functionality?.feedback ?? ai?.functionalityFeedback ?? '',
         },
         codeQuality: {
           name: 'Code Quality',
           maxScore: 10,
-          obtainedScore: ai?.criteria?.codeQuality?.score ?? ai?.codeQualityScore ?? 0,
+          obtainedScore: ai?.criteria?.codeQuality?.obtainedScore ?? ai?.criteria?.codeQuality?.score ?? (ai?.codeQualityScore !== undefined ? Number(ai.codeQualityScore) : (overallScore > 0 ? Math.round(overallScore * 0.10) : 0)),
           feedback: ai?.criteria?.codeQuality?.feedback ?? ai?.codeQualityFeedback ?? '',
         },
         documentation: {
           name: 'Documentation',
           maxScore: 10,
-          obtainedScore: ai?.criteria?.documentation?.score ?? ai?.documentationScore ?? 0,
+          obtainedScore: ai?.criteria?.documentation?.obtainedScore ?? ai?.criteria?.documentation?.score ?? (ai?.documentationScore !== undefined ? Number(ai.documentationScore) : (overallScore > 0 ? Math.round(overallScore * 0.10) : 0)),
           feedback: ai?.criteria?.documentation?.feedback ?? ai?.documentationFeedback ?? '',
         },
         overallQuality: {
           name: 'Overall Project Quality',
           maxScore: 10,
-          obtainedScore: ai?.criteria?.overallQuality?.score ?? ai?.overallQualityScore ?? 0,
+          obtainedScore: ai?.criteria?.overallQuality?.obtainedScore ?? ai?.criteria?.overallQuality?.score ?? (ai?.overallQualityScore !== undefined ? Number(ai.overallQualityScore) : (overallScore > 0 ? Math.round(overallScore * 0.10) : 0)),
           feedback: ai?.criteria?.overallQuality?.feedback ?? ai?.overallQualityFeedback ?? '',
         },
       },

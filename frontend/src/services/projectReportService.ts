@@ -84,8 +84,10 @@ export const projectReportService = {
 
         if (backendResult && Array.isArray(backendResult.projects)) {
           const mappedReports: SupabaseProjectReportRow[] = backendResult.projects.map((p) => {
-            const score = p.overallScore ?? p.aiEvaluation?.overallScore ?? null;
-            const sim = p.similarityScore ?? p.plagiarism?.similarityScore ?? null;
+            const ai = p.aiEvaluation;
+            const plag = p.plagiarism;
+            const score = p.overallScore ?? ai?.overallScore ?? ai?.totalScore ?? ai?.totalScoreOutof100 ?? null;
+            const sim = p.similarityScore ?? plag?.overallSimilarity ?? plag?.similarityScore ?? null;
             return {
               id: p.id,
               user_id: p.userId,
@@ -96,8 +98,9 @@ export const projectReportService = {
               similarity: sim !== null ? Number(sim) : 0,
               report_data: {
                 project: p,
-                evaluation: p.aiEvaluation,
-                plagiarism: p.plagiarism,
+                evaluation: ai,
+                aiEvaluation: ai,
+                plagiarism: plag,
               },
               created_at: p.createdAt,
               updated_at: p.updatedAt || p.createdAt,
@@ -192,14 +195,19 @@ export const projectReportService = {
         const rep = await projectCheckerService.getReport(id);
         if (rep && (rep.project || rep.id)) {
           const p = rep.project || rep;
+          const ai = rep.evaluation || rep.aiEvaluation;
+          const plag = rep.plagiarism;
+          const repScore = rep.overallScore ?? rep.score ?? ai?.overallScore ?? ai?.totalScore ?? ai?.totalScoreOutof100 ?? p.overallScore;
+          const repSim = rep.similarityScore ?? rep.similarity ?? plag?.overallSimilarity ?? plag?.similarityScore ?? p.similarityScore;
+
           return {
             id: p.id,
             user_id: p.userId,
             project_title: p.title,
             category: p.category || 'General Computing & AI',
             status: p.status || 'Evaluated',
-            score: p.overallScore ?? rep.aiEvaluation?.overallScore ?? 0,
-            similarity: p.similarityScore ?? rep.plagiarism?.similarityScore ?? 0,
+            score: repScore !== null && repScore !== undefined ? Number(repScore) : 0,
+            similarity: repSim !== null && repSim !== undefined ? Number(repSim) : 0,
             report_data: rep,
             created_at: p.createdAt || new Date().toISOString(),
             updated_at: p.updatedAt || p.createdAt || new Date().toISOString(),
@@ -370,12 +378,13 @@ export const projectReportService = {
    */
   mapRowToDetails(row: SupabaseProjectReportRow): { project: ProjectDetails; evaluation: StandaloneAIEvaluation } {
     const rawProject = row.report_data?.project || {};
-    const rawEval = row.report_data?.evaluation || {};
+    const rawEval = row.report_data?.evaluation || row.report_data?.aiEvaluation || {};
+    const rawPlag = row.report_data?.plagiarism || rawEval.plagiarism || {};
 
     const project: ProjectDetails = {
       id: row.id,
       title: row.project_title,
-      category: row.category || 'General Computing & AI',
+      category: row.category || rawProject.category || 'General Computing & AI',
       description: rawProject.description || '',
       problemStatement: rawProject.problemStatement || '',
       proposedSolution: rawProject.proposedSolution || '',
@@ -391,87 +400,101 @@ export const projectReportService = {
       githubUrl: rawProject.githubUrl,
       liveDemoUrl: rawProject.liveDemoUrl,
       resources: Array.isArray(rawProject.resources) ? rawProject.resources : [],
-      status: row.status || 'Evaluated',
+      status: row.status || rawProject.status || 'Evaluated',
       createdAt: row.created_at,
       updatedAt: row.updated_at || row.created_at,
     };
 
-    const numScore = Number(row.score) || 0;
-    const numSim = Number(row.similarity) || 0;
+    const numScore = rawEval.overallScore !== undefined && rawEval.overallScore !== null
+      ? Number(rawEval.overallScore)
+      : (rawEval.totalScore !== undefined && rawEval.totalScore !== null
+        ? Number(rawEval.totalScore)
+        : (rawEval.totalScoreOutof100 !== undefined && rawEval.totalScoreOutof100 !== null
+          ? Number(rawEval.totalScoreOutof100)
+          : (row.score !== null && row.score !== undefined ? Number(row.score) : 0)));
+
+    const numSim = rawPlag.overallSimilarity !== undefined && rawPlag.overallSimilarity !== null
+      ? Number(rawPlag.overallSimilarity)
+      : (row.similarity !== null && row.similarity !== undefined ? Number(row.similarity) : 0);
+
+    const codeSim = rawPlag.codeSimilarity !== undefined && rawPlag.codeSimilarity !== null
+      ? Number(rawPlag.codeSimilarity)
+      : Math.max(0, Math.round(numSim * 0.8));
+
+    const repSim = rawPlag.reportSimilarity !== undefined && rawPlag.reportSimilarity !== null
+      ? Number(rawPlag.reportSimilarity)
+      : Math.max(0, Math.round(numSim * 1.2));
+
+    const getCriterion = (
+      key: string,
+      flatKey: string,
+      maxScore: number,
+      defaultName: string,
+      defaultFeedback: string
+    ) => {
+      const nested = rawEval.criteria?.[key];
+      const flatScore = rawEval[flatKey];
+      const flatFeedback = rawEval[`${flatKey.replace('Score', 'Feedback')}`];
+
+      const scoreVal = nested?.obtainedScore ?? nested?.score ?? (flatScore !== undefined && flatScore !== null ? Number(flatScore) : undefined);
+      const feedbackVal = nested?.feedback || flatFeedback || defaultFeedback;
+
+      return {
+        name: nested?.name || defaultName,
+        maxScore: nested?.maxScore ?? maxScore,
+        obtainedScore: scoreVal !== undefined ? scoreVal : (numScore > 0 ? Math.round(numScore * (maxScore / 100)) : 0),
+        feedback: feedbackVal,
+      };
+    };
+
+    const criteria = {
+      problemDefinition: getCriterion('problemDefinition', 'problemDefinitionScore', 15, 'Problem Definition', 'Clear problem definition aligned with domain goals.'),
+      innovationNovelty: getCriterion('innovationNovelty', 'innovationNoveltyScore', 20, 'Innovation & Novelty', 'Domain-specific innovation and technical viability verified.'),
+      technicalImplementation: getCriterion('technicalImplementation', 'technicalImplementationScore', 20, 'Technical Implementation', 'Modular software architecture and implementation.'),
+      functionality: getCriterion('functionality', 'functionalityScore', 15, 'Functionality', 'Core functional workflows structured effectively.'),
+      codeQuality: getCriterion('codeQuality', 'codeQualityScore', 10, 'Code Quality', 'Clean code conventions and structure.'),
+      documentation: getCriterion('documentation', 'documentationScore', 10, 'Documentation', 'Comprehensive architectural and user documentation.'),
+      overallQuality: getCriterion('overallQuality', 'overallQualityScore', 10, 'Overall Project Quality', 'Solid engineering execution and design rigor.'),
+    };
 
     const evaluation: StandaloneAIEvaluation = {
       id: rawEval.id || `eval_${row.id}`,
       projectId: row.id,
-      overallScore: rawEval.overallScore !== undefined ? rawEval.overallScore : numScore,
-      criteria: rawEval.criteria || {
-        problemDefinition: {
-          name: 'Problem Definition',
-          maxScore: 15,
-          obtainedScore: Math.round(numScore * 0.15),
-          feedback: 'Clear problem definition aligned with domain goals.',
-        },
-        innovationNovelty: {
-          name: 'Innovation & Novelty',
-          maxScore: 20,
-          obtainedScore: Math.round(numScore * 0.20),
-          feedback: 'Domain-specific innovation and technical viability verified.',
-        },
-        technicalImplementation: {
-          name: 'Technical Implementation',
-          maxScore: 20,
-          obtainedScore: Math.round(numScore * 0.20),
-          feedback: 'Modular software architecture and implementation.',
-        },
-        functionality: {
-          name: 'Functionality',
-          maxScore: 15,
-          obtainedScore: Math.round(numScore * 0.15),
-          feedback: 'Core functional workflows structured effectively.',
-        },
-        codeQuality: {
-          name: 'Code Quality',
-          maxScore: 10,
-          obtainedScore: Math.round(numScore * 0.10),
-          feedback: 'Clean code conventions and structure.',
-        },
-        documentation: {
-          name: 'Documentation',
-          maxScore: 10,
-          obtainedScore: Math.round(numScore * 0.10),
-          feedback: 'Comprehensive architectural and user documentation.',
-        },
-        overallQuality: {
-          name: 'Overall Project Quality',
-          maxScore: 10,
-          obtainedScore: Math.round(numScore * 0.10),
-          feedback: 'Solid engineering execution and design rigor.',
-        },
-      },
-      plagiarism: rawEval.plagiarism || {
-        codeSimilarity: Math.max(0, Math.round(numSim * 0.8)),
-        reportSimilarity: Math.max(0, Math.round(numSim * 1.2)),
+      overallScore: numScore,
+      criteria,
+      plagiarism: {
+        codeSimilarity: codeSim,
+        reportSimilarity: repSim,
         overallSimilarity: numSim,
-        status: numSim <= 15 ? 'Low' : numSim <= 30 ? 'Moderate' : 'High',
+        status: rawPlag.status || (numSim <= 15 ? 'Low' : numSim <= 30 ? 'Moderate' : 'High'),
         isDemoData: false,
       },
-      strengths: Array.isArray(rawEval.strengths) && rawEval.strengths.length > 0 ? rawEval.strengths : [
-        'Well-defined technical problem statement and architecture.',
-        'Modular design with clear separation of concerns.',
-      ],
-      weaknesses: Array.isArray(rawEval.weaknesses) && rawEval.weaknesses.length > 0 ? rawEval.weaknesses : [
-        'Automated regression testing benchmarks should be formalized.',
-      ],
-      technicalAnalysis: rawEval.technicalAnalysis || `Technical evaluation confirms clean architectural design and practical execution viability.`,
+      strengths: Array.isArray(rawEval.strengths) && rawEval.strengths.length > 0
+        ? rawEval.strengths
+        : (typeof rawEval.strengths === 'string' ? JSON.parse(rawEval.strengths) : [
+          'Well-defined technical problem statement and architecture.',
+          'Modular design with clear separation of concerns.',
+        ]),
+      weaknesses: Array.isArray(rawEval.weaknesses) && rawEval.weaknesses.length > 0
+        ? rawEval.weaknesses
+        : (typeof rawEval.weaknesses === 'string' ? JSON.parse(rawEval.weaknesses) : [
+          'Automated regression testing benchmarks should be formalized.',
+        ]),
+      technicalAnalysis: rawEval.technicalAnalysis || 'Technical evaluation confirms clean architectural design and practical execution viability.',
       codeAnalysis: rawEval.codeAnalysis || 'Clean component structure, strong typing practices, and standard error boundary implementations.',
       documentationAnalysis: rawEval.documentationAnalysis || 'Documentation provides clear objectives, architecture overview, and deployment parameters.',
-      actionableSuggestions: Array.isArray(rawEval.actionableSuggestions) && rawEval.actionableSuggestions.length > 0 ? rawEval.actionableSuggestions : [
-        'Implement automated CI/CD unit and integration tests.',
-        'Add structured error logging and telemetry for operational observability.',
-      ],
-      improvementPlan: Array.isArray(rawEval.improvementPlan) && rawEval.improvementPlan.length > 0 ? rawEval.improvementPlan : [
-        { area: 'Testing Automation', suggestion: 'Implement automated CI/CD test suites across edge and unit modules.', priority: 'High' },
-        { area: 'Operational Monitoring', suggestion: 'Add performance telemetry and error reporting hooks.', priority: 'Medium' },
-      ],
+      actionableSuggestions: Array.isArray(rawEval.actionableSuggestions) && rawEval.actionableSuggestions.length > 0
+        ? rawEval.actionableSuggestions
+        : (typeof rawEval.actionableSuggestions === 'string' ? JSON.parse(rawEval.actionableSuggestions) : [
+          'Implement automated CI/CD unit and integration tests.',
+          'Add structured error logging and telemetry for operational observability.',
+        ]),
+      improvementPlan: Array.isArray(rawEval.improvementPlan) && rawEval.improvementPlan.length > 0
+        ? rawEval.improvementPlan
+        : (typeof rawEval.improvementPlan === 'string' ? JSON.parse(rawEval.improvementPlan) : [
+          { area: 'Testing Automation', suggestion: 'Implement automated CI/CD test suites across edge and unit modules.', priority: 'High' },
+          { area: 'Operational Monitoring', suggestion: 'Add performance telemetry and error reporting hooks.', priority: 'Medium' },
+        ]),
       summary: rawEval.summary || `${row.project_title} exhibits strong design principles and practical execution viability. Plagiarism metrics are well within safe thresholds.`,
       evaluatedAt: rawEval.evaluatedAt || row.created_at,
       status: row.status || 'Evaluated',

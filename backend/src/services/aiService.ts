@@ -140,15 +140,21 @@ export class AIService {
         userFacingMessage = 'AI provider authentication failed. Please contact administrator.';
       } else if (
         err.statusCode === 503 ||
+        err.statusCode === 502 ||
+        err.statusCode === 504 ||
         errStr.includes('503') ||
         errStr.includes('unavailable') ||
         errStr.includes('high demand') ||
         errStr.includes('overloaded') ||
-        errStr.includes('timeout')
+        errStr.includes('timeout') ||
+        errStr.includes('fetch failed') ||
+        errStr.includes('econnreset') ||
+        errStr.includes('etimedout') ||
+        errStr.includes('enotfound')
       ) {
-        // Temporary provider error
+        // Temporary network or provider error
         statusCode = 503;
-        userFacingMessage = 'AI service temporarily unavailable. Please click Retry.';
+        userFacingMessage = 'AI service is currently unavailable. Please try again.';
       } else if (
         err.statusCode === 400 ||
         errStr.includes('400') ||
@@ -162,8 +168,13 @@ export class AIService {
         userFacingMessage = err.message || userFacingMessage;
       }
 
-      // Safe error logging: Response status
+      // Safe error logging: Response status and underlying cause
       console.error(`[AIService] Response status: ${statusCode} after ${durationMs}ms (Error: ${safeErrMsg})`);
+      if (err?.cause) {
+        const causeCode = (err.cause as any).code || 'N/A';
+        const causeMsg = this.sanitizeErrorLog((err.cause as any).message || String(err.cause));
+        console.error(`[AIService] Cause diagnostic: code=${causeCode}, message=${causeMsg}`);
+      }
 
       throw new AppError(userFacingMessage, statusCode, [], { errorCode, retryAfterSeconds });
     }
