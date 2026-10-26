@@ -139,6 +139,10 @@ export class AuthService {
       sbUser = await verifyRes.json();
     } catch (err: any) {
       if (err instanceof AppError) throw err;
+      const msg = (err?.message || '').toLowerCase();
+      if (msg.includes('fetch failed') || msg.includes('enotfound') || err?.name === 'AbortError') {
+        throw new AppError('Supabase authentication service is currently unreachable (network error). Please retry.', 503);
+      }
       throw new AppError('Invalid or expired Supabase authentication session', 401);
     }
 

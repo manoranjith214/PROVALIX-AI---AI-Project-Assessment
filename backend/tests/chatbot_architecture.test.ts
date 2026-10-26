@@ -40,6 +40,10 @@ describe('PROVALIX AI CHATBOT ARCHITECTURE & EXACT TEST CASES (A-I)', () => {
   const userId = 'user-architecture-123';
   const projectId = 'proj-real-456';
 
+  beforeAll(() => {
+    jest.setTimeout(45000);
+  });
+
   let mockMessages: Array<{ id: string; role: string; message: string; sources?: any[] }> = [];
 
   beforeEach(() => {

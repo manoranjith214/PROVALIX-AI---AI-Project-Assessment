@@ -290,6 +290,12 @@ export class GeminiProvider implements AIProvider {
     return this.modelName;
   }
 
+  getFallbackModel(currentModel: string): string {
+    if (currentModel === 'gemini-3.8-flash') return 'gemini-3.5-flash';
+    if (currentModel === 'gemini-3.5-flash') return 'gemini-3.8-flash';
+    return 'gemini-3.5-flash';
+  }
+
   /**
    * Generates a conversational assistant response using Gemini with RAG context and bounded history
    */
@@ -389,24 +395,40 @@ STRICT OPERATIONAL RULES:
 
       let response;
       const executeCall = async (modelToUse: string) => {
-        return await this.client!.models.generateContent({
-          model: modelToUse,
-          contents,
-          config: {
-            systemInstruction,
-            temperature: 0.6,
-          },
+        let timeoutTimer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            const err: any = new Error(`Request to ${modelToUse} timed out after 12000ms`);
+            err.status = 504;
+            err.statusCode = 504;
+            reject(err);
+          }, 12000);
         });
+
+        try {
+          const callPromise = this.client!.models.generateContent({
+            model: modelToUse,
+            contents,
+            config: {
+              systemInstruction,
+              temperature: 0.6,
+            },
+          });
+          return await Promise.race([callPromise, timeoutPromise]);
+        } finally {
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+        }
       };
 
-      // Bounded retry logic (Requirement 7): attempt 1, short backoff, attempt 2, then fail cleanly
+      // Bounded retry logic with model failover: attempt 1 on configured model, retry on standby model (e.g. gemini-3.5-flash) if 503/504 encountered
       const maxAttempts = 2;
       let attempt = 0;
 
       while (attempt < maxAttempts) {
         attempt++;
+        const currentModel = attempt === 1 ? this.modelName : this.getFallbackModel(this.modelName);
         try {
-          response = await executeCall(this.modelName);
+          response = await executeCall(currentModel);
           break;
         } catch (firstErr: any) {
           console.error(formatGeminiDiagnosticError(firstErr));
@@ -416,6 +438,15 @@ STRICT OPERATIONAL RULES:
             console.warn('[GeminiProvider] 429 quota exceeded');
             console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
             console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
+
+            // If per-model quota is exceeded (e.g. daily free tier limit on current model) and standby model hasn't been tried yet, failover
+            const isPerModelQuota = (firstErr?.message || '').includes('PerModel') || (firstErr?.message || '').includes(currentModel);
+            if (isPerModelQuota && attempt < maxAttempts) {
+              const nextModel = this.getFallbackModel(this.modelName);
+              console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded on ${currentModel}, failing over to standby model ${nextModel}...`);
+              await new Promise((r) => setTimeout(r, 1000));
+              continue;
+            }
 
             if (!quotaDetails.retryAllowed || attempt >= maxAttempts) {
               throw new GeminiQuotaError(quotaDetails, firstErr?.message);
@@ -433,7 +464,8 @@ STRICT OPERATIONAL RULES:
           }
 
           const backoffMs = attempt * 1500;
-          console.warn(`⚠️ [GeminiProvider]: Transient error encountered on ${this.modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+          const nextModel = this.getFallbackModel(this.modelName);
+          console.warn(`⚠️ [GeminiProvider]: Transient error encountered on ${currentModel}, retrying on ${nextModel} after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
           await new Promise((r) => setTimeout(r, backoffMs));
           continue;
         }
@@ -478,22 +510,38 @@ STRICT OPERATIONAL RULES:
 
   private async generateJsonWithRetry(prompt: string, modelName: string = this.modelName): Promise<any> {
     const executeCall = async (model: string) => {
-      return this.client!.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: 'application/json' },
+      let timeoutTimer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(() => {
+          const err: any = new Error(`JSON request to ${model} timed out after 15000ms`);
+          err.status = 504;
+          err.statusCode = 504;
+          reject(err);
+        }, 15000);
       });
+
+      try {
+        const callPromise = this.client!.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { responseMimeType: 'application/json' },
+        });
+        return await Promise.race([callPromise, timeoutPromise]);
+      } finally {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+      }
     };
 
-    // Bounded retry logic (Requirement 7): attempt 1, short backoff, attempt 2, then fail cleanly
+    // Bounded retry logic with model failover: attempt 1 on primary, attempt 2 on fallback model if 503/504 encountered
     const maxAttempts = 2;
     let attempt = 0;
     let response;
 
     while (attempt < maxAttempts) {
       attempt++;
+      const currentModel = attempt === 1 ? modelName : this.getFallbackModel(modelName);
       try {
-        response = await executeCall(modelName);
+        response = await executeCall(currentModel);
         break;
       } catch (firstErr: any) {
         console.error(formatGeminiDiagnosticError(firstErr));
@@ -503,6 +551,15 @@ STRICT OPERATIONAL RULES:
           console.warn('[GeminiProvider] 429 quota exceeded');
           console.warn(`[GeminiProvider] quota type: ${quotaDetails.quotaType}`);
           console.warn(`[GeminiProvider] retry allowed: ${quotaDetails.retryAllowed}`);
+
+          // If per-model quota is exceeded and standby model hasn't been tried yet, failover
+          const isPerModelQuota = (firstErr?.message || '').includes('PerModel') || (firstErr?.message || '').includes(currentModel);
+          if (isPerModelQuota && attempt < maxAttempts) {
+            const nextModel = this.getFallbackModel(modelName);
+            console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded in JSON eval on ${currentModel}, failing over to standby model ${nextModel}...`);
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
 
           if (!quotaDetails.retryAllowed || attempt >= maxAttempts) {
             throw new GeminiQuotaError(quotaDetails, firstErr?.message);
@@ -520,7 +577,8 @@ STRICT OPERATIONAL RULES:
         }
 
         const backoffMs = attempt * 1500;
-        console.warn(`⚠️ [GeminiProvider]: Transient error encountered in JSON eval on ${modelName}, retrying after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+        const nextModel = this.getFallbackModel(modelName);
+        console.warn(`⚠️ [GeminiProvider]: Transient error encountered in JSON eval on ${currentModel}, retrying on ${nextModel} after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
         await new Promise((r) => setTimeout(r, backoffMs));
         continue;
       }
@@ -780,11 +838,9 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
       return this.fallbackProvider.generateFeedback(context, score);
     }
     try {
-      const res = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: `Provide a concise 2-sentence evaluation feedback for score ${score}/100. Context: ${context.slice(0, 300)}`,
-      });
-      return res.text || this.fallbackProvider.generateFeedback(context, score);
+      const prompt = `Provide a concise 2-sentence evaluation feedback for score ${score}/100. Context: ${context.slice(0, 300)}`;
+      const resText = await this.generateResponse(prompt);
+      return resText || this.fallbackProvider.generateFeedback(context, score);
     } catch (err: any) {
       if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
         throw new Error(err?.message || 'AI feedback generation is currently unavailable.');
@@ -805,11 +861,9 @@ ${JSON.stringify(evidenceData || {}, null, 2)}`;
       return this.fallbackProvider.summarizeReport(reportData);
     }
     try {
-      const res = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: `Summarize the project evaluation report in 2-3 concise sentences: ${JSON.stringify(reportData).slice(0, 600)}`,
-      });
-      return res.text || this.fallbackProvider.summarizeReport(reportData);
+      const prompt = `Summarize the project evaluation report in 2-3 concise sentences: ${JSON.stringify(reportData).slice(0, 600)}`;
+      const resText = await this.generateResponse(prompt);
+      return resText || this.fallbackProvider.summarizeReport(reportData);
     } catch (err: any) {
       if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
         throw new Error(err?.message || 'AI report summarizer is currently unavailable.');
@@ -844,19 +898,11 @@ Respond ONLY as a JSON array:
   { "questionNumber": 5, "category": "Scenario / Challenge / Failure Handling", "questionText": "...", "maxScore": 5.0 }
 ]`;
 
-      const res = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: { responseMimeType: 'application/json' },
-      });
-
-      const text = res.text;
-      if (text) {
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed) && parsed.length === 5) {
-          return parsed;
-        }
+      const parsed = await this.generateJsonWithRetry(prompt);
+      if (Array.isArray(parsed) && parsed.length === 5) {
+        return parsed;
       }
+
       if (config.ai.provider === 'gemini' || config.nodeEnv === 'production') {
         throw new Error('AI provider returned an invalid format for viva questions.');
       }

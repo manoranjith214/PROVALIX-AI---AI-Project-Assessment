@@ -44,6 +44,8 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     });
   }
 
+  let isLocalExpired = false;
+
   // 1. Try local JWT token verification first (fast, works in test suites & local sessions)
   try {
     const payload = verifyAccessToken(token);
@@ -51,7 +53,10 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       req.user = payload;
       return next();
     }
-  } catch {
+  } catch (jwtErr: any) {
+    if (jwtErr?.name === 'TokenExpiredError') {
+      isLocalExpired = true;
+    }
     // Local JWT check failed or token is a Supabase JWT; proceed to Supabase verification
   }
 
@@ -121,7 +126,29 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return next();
     }
   } catch (sbErr: any) {
+    if (
+      sbErr?.code?.startsWith?.('P') ||
+      sbErr?.name?.includes?.('Prisma') ||
+      sbErr?.message?.includes?.('connection') ||
+      sbErr?.message?.includes?.('ENOTFOUND')
+    ) {
+      console.error('[Auth] Database connection error during user sync:', sbErr?.message || sbErr);
+      return res.status(503).json({
+        success: false,
+        error: 'DATABASE_UNAVAILABLE',
+        message: 'Database service is temporarily unavailable. Please retry in a moment.',
+      });
+    }
     console.warn('[Auth] Supabase verification notice:', sbErr?.message || 'Verification failed');
+  }
+
+  if (isLocalExpired) {
+    console.log(`[Auth] Endpoint: ${endpoint} | Status: 401 Unauthorized (Token expired)`);
+    return res.status(401).json({
+      success: false,
+      error: 'TOKEN_EXPIRED',
+      message: 'Authentication session has expired. Please refresh your session.',
+    });
   }
 
   console.log(`[Auth] Endpoint: ${endpoint} | Status: 401 Unauthorized (Expired or invalid token)`);
