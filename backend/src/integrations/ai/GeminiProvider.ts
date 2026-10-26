@@ -253,6 +253,55 @@ export function parseGeminiQuotaError(err: any): GeminiQuotaDetails {
   };
 }
 
+interface ModelCircuitBreaker {
+  failureCount: number;
+  lastFailureTime: number;
+  cooldownUntil: number;
+}
+
+const circuitBreakers = new Map<string, ModelCircuitBreaker>();
+const COOLDOWN_DURATION_MS = 60 * 1000; // 60s cooldown when high demand 503 occurs
+
+export function isModelInCooldown(modelName: string): boolean {
+  const cb = circuitBreakers.get(modelName);
+  if (!cb) return false;
+  if (Date.now() < cb.cooldownUntil) {
+    return true;
+  }
+  circuitBreakers.delete(modelName);
+  return false;
+}
+
+export function recordModelFailure(modelName: string, status?: number): void {
+  if (status === 503 || status === 504) {
+    const existing = circuitBreakers.get(modelName);
+    const count = (existing?.failureCount || 0) + 1;
+    circuitBreakers.set(modelName, {
+      failureCount: count,
+      lastFailureTime: Date.now(),
+      cooldownUntil: Date.now() + COOLDOWN_DURATION_MS,
+    });
+    console.warn(`[GeminiProvider] Circuit breaker tripped for model ${modelName} due to status ${status}. Cooldown active for ${COOLDOWN_DURATION_MS / 1000}s.`);
+  }
+}
+
+export function recordModelSuccess(modelName: string): void {
+  if (circuitBreakers.has(modelName)) {
+    circuitBreakers.delete(modelName);
+    console.log(`[GeminiProvider] Circuit breaker reset for model ${modelName} after successful response.`);
+  }
+}
+
+export function resetCircuitBreakers(): void {
+  circuitBreakers.clear();
+}
+
+function calculateBackoffWithJitter(attempt: number, baseMs = 1000, maxMs = 4000): number {
+  const exp = Math.min(maxMs, baseMs * Math.pow(1.5, attempt - 1));
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.round(exp + jitter);
+}
+
 export class GeminiProvider implements AIProvider {
   private client: GoogleGenAI | null = null;
   private modelName: string;
@@ -291,9 +340,14 @@ export class GeminiProvider implements AIProvider {
   }
 
   getFallbackModel(currentModel: string): string {
-    if (currentModel === 'gemini-3.8-flash') return 'gemini-3.5-flash';
-    if (currentModel === 'gemini-3.5-flash') return 'gemini-3.8-flash';
-    return 'gemini-3.5-flash';
+    const configuredFallback = config.ai.geminiFallbackModel || 'gemini-3-flash-preview';
+    if (currentModel === this.modelName || currentModel === 'gemini-3.8-flash' || currentModel === 'gemini-3.5-flash') {
+      return configuredFallback;
+    }
+    if (currentModel === configuredFallback) {
+      return configuredFallback === 'gemini-3.6-flash' ? 'gemini-3-flash-preview' : 'gemini-3.6-flash';
+    }
+    return configuredFallback;
   }
 
   /**
@@ -398,11 +452,11 @@ STRICT OPERATIONAL RULES:
         let timeoutTimer: NodeJS.Timeout | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutTimer = setTimeout(() => {
-            const err: any = new Error(`Request to ${modelToUse} timed out after 12000ms`);
+            const err: any = new Error(`Request to ${modelToUse} timed out after 20000ms`);
             err.status = 504;
             err.statusCode = 504;
             reject(err);
-          }, 12000);
+          }, 20000);
         });
 
         try {
@@ -420,17 +474,32 @@ STRICT OPERATIONAL RULES:
         }
       };
 
-      // Bounded retry logic with model failover: attempt 1 on configured model, retry on standby model (e.g. gemini-3.5-flash) if 503/504 encountered
+      // Check circuit breaker cooldown for primary model
+      let startingModel = this.modelName;
+      if (isModelInCooldown(startingModel)) {
+        const standby = this.getFallbackModel(startingModel);
+        console.warn(`⚠️ [GeminiProvider]: Primary model ${startingModel} is in circuit breaker cooldown, routing directly to verified fallback ${standby}...`);
+        startingModel = standby;
+      }
+
+      // Bounded retry logic with model failover: attempt 1 on startingModel, fallback model on transient 503/504
       const maxAttempts = 2;
       let attempt = 0;
+      let currentModel = startingModel;
 
       while (attempt < maxAttempts) {
         attempt++;
-        const currentModel = attempt === 1 ? this.modelName : this.getFallbackModel(this.modelName);
+        if (attempt > 1) {
+          currentModel = this.getFallbackModel(currentModel);
+        }
+
         try {
           response = await executeCall(currentModel);
+          recordModelSuccess(currentModel);
           break;
         } catch (firstErr: any) {
+          const status = firstErr?.status || firstErr?.statusCode;
+          recordModelFailure(currentModel, status);
           console.error(formatGeminiDiagnosticError(firstErr));
 
           const quotaDetails = parseGeminiQuotaError(firstErr);
@@ -442,9 +511,10 @@ STRICT OPERATIONAL RULES:
             // If per-model quota is exceeded (e.g. daily free tier limit on current model) and standby model hasn't been tried yet, failover
             const isPerModelQuota = (firstErr?.message || '').includes('PerModel') || (firstErr?.message || '').includes(currentModel);
             if (isPerModelQuota && attempt < maxAttempts) {
-              const nextModel = this.getFallbackModel(this.modelName);
-              console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded on ${currentModel}, failing over to standby model ${nextModel}...`);
-              await new Promise((r) => setTimeout(r, 1000));
+              const nextModel = this.getFallbackModel(currentModel);
+              const backoffMs = calculateBackoffWithJitter(attempt, 800, 2000);
+              console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded on ${currentModel}, failing over to standby model ${nextModel} after ${backoffMs}ms...`);
+              await new Promise((r) => setTimeout(r, backoffMs));
               continue;
             }
 
@@ -463,9 +533,9 @@ STRICT OPERATIONAL RULES:
             throw firstErr;
           }
 
-          const backoffMs = attempt * 1500;
-          const nextModel = this.getFallbackModel(this.modelName);
-          console.warn(`⚠️ [GeminiProvider]: Transient error encountered on ${currentModel}, retrying on ${nextModel} after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+          const backoffMs = calculateBackoffWithJitter(attempt, 1000, 3000);
+          const nextModel = this.getFallbackModel(currentModel);
+          console.warn(`⚠️ [GeminiProvider]: Transient error (${status || firstErr?.message}) encountered on ${currentModel}, retrying on verified fallback ${nextModel} after ${backoffMs}ms backoff with jitter (attempt ${attempt}/${maxAttempts})...`);
           await new Promise((r) => setTimeout(r, backoffMs));
           continue;
         }
@@ -513,11 +583,11 @@ STRICT OPERATIONAL RULES:
       let timeoutTimer: NodeJS.Timeout | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutTimer = setTimeout(() => {
-          const err: any = new Error(`JSON request to ${model} timed out after 15000ms`);
+          const err: any = new Error(`JSON request to ${model} timed out after 20000ms`);
           err.status = 504;
           err.statusCode = 504;
           reject(err);
-        }, 15000);
+        }, 20000);
       });
 
       try {
@@ -532,18 +602,33 @@ STRICT OPERATIONAL RULES:
       }
     };
 
-    // Bounded retry logic with model failover: attempt 1 on primary, attempt 2 on fallback model if 503/504 encountered
+    // Check circuit breaker cooldown for primary model
+    let startingModel = modelName;
+    if (isModelInCooldown(startingModel)) {
+      const standby = this.getFallbackModel(startingModel);
+      console.warn(`⚠️ [GeminiProvider]: Model ${startingModel} is in circuit breaker cooldown, routing JSON eval to verified fallback ${standby}...`);
+      startingModel = standby;
+    }
+
+    // Bounded retry logic with model failover: attempt 1 on startingModel, fallback model on transient 503/504
     const maxAttempts = 2;
     let attempt = 0;
+    let currentModel = startingModel;
     let response;
 
     while (attempt < maxAttempts) {
       attempt++;
-      const currentModel = attempt === 1 ? modelName : this.getFallbackModel(modelName);
+      if (attempt > 1) {
+        currentModel = this.getFallbackModel(currentModel);
+      }
+
       try {
         response = await executeCall(currentModel);
+        recordModelSuccess(currentModel);
         break;
       } catch (firstErr: any) {
+        const status = firstErr?.status || firstErr?.statusCode;
+        recordModelFailure(currentModel, status);
         console.error(formatGeminiDiagnosticError(firstErr));
         const quotaDetails = parseGeminiQuotaError(firstErr);
 
@@ -555,9 +640,10 @@ STRICT OPERATIONAL RULES:
           // If per-model quota is exceeded and standby model hasn't been tried yet, failover
           const isPerModelQuota = (firstErr?.message || '').includes('PerModel') || (firstErr?.message || '').includes(currentModel);
           if (isPerModelQuota && attempt < maxAttempts) {
-            const nextModel = this.getFallbackModel(modelName);
-            console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded in JSON eval on ${currentModel}, failing over to standby model ${nextModel}...`);
-            await new Promise((r) => setTimeout(r, 1000));
+            const nextModel = this.getFallbackModel(currentModel);
+            const backoffMs = calculateBackoffWithJitter(attempt, 800, 2000);
+            console.warn(`⚠️ [GeminiProvider]: Per-model quota exceeded in JSON eval on ${currentModel}, failing over to standby model ${nextModel} after ${backoffMs}ms...`);
+            await new Promise((r) => setTimeout(r, backoffMs));
             continue;
           }
 
@@ -576,9 +662,9 @@ STRICT OPERATIONAL RULES:
           throw firstErr;
         }
 
-        const backoffMs = attempt * 1500;
-        const nextModel = this.getFallbackModel(modelName);
-        console.warn(`⚠️ [GeminiProvider]: Transient error encountered in JSON eval on ${currentModel}, retrying on ${nextModel} after ${backoffMs}ms backoff (attempt ${attempt}/${maxAttempts})...`);
+        const backoffMs = calculateBackoffWithJitter(attempt, 1000, 3000);
+        const nextModel = this.getFallbackModel(currentModel);
+        console.warn(`⚠️ [GeminiProvider]: Transient error (${status || firstErr?.message}) in JSON eval on ${currentModel}, retrying on verified fallback ${nextModel} after ${backoffMs}ms backoff with jitter (attempt ${attempt}/${maxAttempts})...`);
         await new Promise((r) => setTimeout(r, backoffMs));
         continue;
       }

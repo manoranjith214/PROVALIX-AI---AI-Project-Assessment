@@ -89,5 +89,6 @@ export const config = {
     provider: (process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : (process.env.NODE_ENV === 'production' ? 'gemini' : 'mock'))).toLowerCase(),
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     geminiModel: getCentralizedGeminiModel(),
+    geminiFallbackModel: (process.env.GEMINI_FALLBACK_MODEL || 'gemini-3-flash-preview').trim(),
   },
 };

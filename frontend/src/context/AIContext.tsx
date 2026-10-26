@@ -334,14 +334,16 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       setMessages(prev => [...prev, aiMsg]);
+      setError(null);
       loadHistory();
     } catch (err: any) {
       console.error('AI assistant call failed:', err);
-      let errorMessage = 'AI service encountered a server error.';
+      let errorMessage = 'AI service is temporarily unavailable. Please try again.';
       const status = err?.status || err?.response?.status;
       const errorCode = err?.errorCode || err?.response?.data?.error;
       const retryAfterSeconds = err?.retryAfterSeconds || err?.response?.data?.retryAfterSeconds;
-      const lowerMsg = (err?.message || '').toLowerCase();
+      const rawMsg = err?.message || err?.response?.data?.message || '';
+      const lowerMsg = rawMsg.toLowerCase();
 
       if (
         errorCode === 'AI_QUOTA_EXCEEDED' ||
@@ -359,8 +361,8 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             const minutes = Math.max(1, Math.round(retryAfterSeconds / 60));
             errorMessage = `AI usage limit reached. Try again in approximately ${minutes} minute${minutes > 1 ? 's' : ''}.`;
           }
-        } else if (err?.message && !err.message.includes('{') && !err.message.includes('API key') && !err.message.includes('429')) {
-          errorMessage = err.message;
+        } else if (rawMsg && !rawMsg.includes('{') && !rawMsg.includes('API key') && !rawMsg.includes('429')) {
+          errorMessage = rawMsg;
         } else {
           errorMessage = 'AI usage limit reached. Please try again later.';
         }
@@ -371,7 +373,7 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         lowerMsg.includes('failed to fetch') ||
         lowerMsg.includes('econnrefused')
       ) {
-        errorMessage = 'Unable to reach the AI service.';
+        errorMessage = 'Unable to reach the AI service. Please check your network connection.';
       } else if (
         status === 401 ||
         lowerMsg.includes('session has expired') ||
@@ -382,10 +384,20 @@ export const AIProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         errorMessage = 'Your session has expired. Please sign in again.';
       } else if (status === 403) {
         errorMessage = 'You do not have permission to access this resource.';
-      } else if (status >= 500) {
-        errorMessage = 'AI service encountered a server error.';
-      } else if (err?.message && !err.message.includes('{') && !err.message.includes('API key')) {
-        errorMessage = err.message;
+      } else if (
+        status === 503 ||
+        status === 504 ||
+        lowerMsg.includes('unavailable') ||
+        lowerMsg.includes('high demand') ||
+        lowerMsg.includes('timed out')
+      ) {
+        errorMessage = rawMsg && !rawMsg.includes('{') && !rawMsg.includes('API key')
+          ? rawMsg
+          : 'AI service is temporarily unavailable due to high demand. Please click Retry.';
+      } else if (rawMsg && !rawMsg.includes('{') && !rawMsg.includes('API key')) {
+        errorMessage = rawMsg;
+      } else {
+        errorMessage = 'AI service is temporarily unavailable. Please try again.';
       }
 
       setError(errorMessage);

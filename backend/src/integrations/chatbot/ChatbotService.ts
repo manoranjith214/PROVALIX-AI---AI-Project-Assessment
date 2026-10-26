@@ -184,7 +184,13 @@ export class ChatbotService {
     console.log('AI RESPONSE:', (aiResponseText.length > 250 ? aiResponseText.slice(0, 250) + '... [truncated]' : aiResponseText));
 
     // 8. Persist Assistant Response with genuine sources
-    await chatbotRepository.addMessage(conversation.id, 'assistant', aiResponseText, sources);
+    try {
+      await chatbotRepository.addMessage(conversation.id, 'assistant', aiResponseText, sources);
+    } catch (saveErr: any) {
+      console.warn('⚠️ [ChatbotService]: Failed first attempt to persist assistant response, retrying once...', saveErr?.message);
+      await new Promise((r) => setTimeout(r, 250));
+      await chatbotRepository.addMessage(conversation.id, 'assistant', aiResponseText, sources);
+    }
 
     return {
       conversationId: conversation.id,

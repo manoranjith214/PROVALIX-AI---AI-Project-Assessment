@@ -41,24 +41,21 @@ export class ChatbotRepository {
   }
 
   async addMessage(conversationId: string, role: string, message: string, sources?: any[]) {
-    return prisma.$transaction(async (tx) => {
-      const chatMsg = await tx.chatMessage.create({
+    const [chatMsg] = await prisma.$transaction([
+      prisma.chatMessage.create({
         data: {
           conversationId,
           role,
           message,
           sources: sources ? JSON.stringify(sources) : undefined,
         },
-      });
-
-      // Update conversation updatedAt timestamp
-      await tx.chatConversation.update({
+      }),
+      prisma.chatConversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date() },
-      });
-
-      return chatMsg;
-    }, { maxWait: 15000, timeout: 30000 });
+      }),
+    ]);
+    return chatMsg;
   }
 
   async findRecentPendingUserConversation(userId: string, userMessage: string) {

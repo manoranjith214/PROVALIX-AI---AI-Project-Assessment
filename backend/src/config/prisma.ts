@@ -32,7 +32,10 @@ if (databaseUrl) {
   if (databaseUrl.includes('pooler.supabase.com')) {
     if (!databaseUrl.includes('connection_limit=')) {
       const separator = databaseUrl.includes('?') ? '&' : '?';
-      databaseUrl = `${databaseUrl}${separator}connection_limit=15&pool_timeout=30&connect_timeout=15`;
+      databaseUrl = `${databaseUrl}${separator}connection_limit=5&pool_timeout=30&connect_timeout=15`;
+    } else {
+      // Prevent exhausting Supabase pooler 15-connection session limit
+      databaseUrl = databaseUrl.replace(/connection_limit=15\b/g, 'connection_limit=5');
     }
   }
   process.env.DATABASE_URL = databaseUrl;
@@ -53,8 +56,7 @@ export const prisma =
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+// Always retain global singleton across all environments to guarantee connection reuse
+globalForPrisma.prisma = prisma;
 
 export default prisma;
