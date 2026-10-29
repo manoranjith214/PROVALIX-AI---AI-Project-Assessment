@@ -17,6 +17,8 @@
     "test": "npm run test --prefix backend",
     "test:backend": "npm run test --prefix backend",
     "seed": "npm run prisma:seed --prefix backend",
+    "seed:demo": "npm run seed:demo --prefix backend",
+    "seed:demo:reset": "npm run seed:demo:reset --prefix backend",
     "prisma:generate": "npm run prisma:generate --prefix backend",
     "prisma:migrate": "npm run prisma:migrate --prefix backend"
   },

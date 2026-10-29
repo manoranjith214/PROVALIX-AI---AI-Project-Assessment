@@ -99,6 +99,9 @@ export interface PlagiarismResult {
   overallSimilarity: number;
   status: 'Low' | 'Moderate' | 'High';
   isDemoData: boolean;
+  isScanned?: boolean;
+  feedback?: string;
+  matchedSources?: string[];
 }
 
 export interface StandaloneAIEvaluation {

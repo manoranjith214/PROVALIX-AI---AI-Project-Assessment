@@ -144,7 +144,15 @@ export class PdfReportGenerator {
       // ==========================================
       // PLAGIARISM & INTEGRITY ANALYSIS
       // ==========================================
-      doc.fillColor(darkColor).fontSize(11).font('Helvetica-Bold').text('2. Plagiarism & Originality Analysis', 40, doc.y);
+      const isPlagDemo = Boolean(report.plagiarism?.isDemoData);
+      const isPlagScanned = Boolean(report.plagiarism);
+      const sectionTitle = isPlagDemo
+        ? '2. Plagiarism Screening [DEMO SIMULATION — NOT A VERIFIED PLAGIARISM RESULT]'
+        : !isPlagScanned
+          ? '2. Plagiarism & Originality Analysis [AWAITING SCAN]'
+          : '2. Plagiarism & Originality Analysis';
+
+      doc.fillColor(darkColor).fontSize(10).font('Helvetica-Bold').text(sectionTitle, 40, doc.y);
       doc.y += 4;
 
       const plagY = doc.y;
@@ -153,22 +161,28 @@ export class PdfReportGenerator {
       const codeSim = report.plagiarism?.codeSimilarity ?? 0;
       const reportSim = report.plagiarism?.reportSimilarity ?? 0;
       const overallSim = report.plagiarism?.overallSimilarity ?? 0;
-      const plagStatus = report.plagiarism?.status ?? 'Low';
+      const plagStatus = !isPlagScanned
+        ? 'Awaiting Scan'
+        : overallSim <= 15
+          ? 'Clean'
+          : overallSim <= 30
+            ? 'Moderate'
+            : 'High';
 
-      const statusColor = plagStatus === 'Low' ? '#059669' : plagStatus === 'Moderate' ? '#D97706' : '#DC2626';
+      const statusColor = plagStatus === 'Clean' ? '#059669' : plagStatus === 'Moderate' ? '#D97706' : '#DC2626';
 
       doc.fontSize(8).font('Helvetica').fillColor(grayColor)
         .text('Code Similarity', 60, plagY + 10)
         .text('Report Similarity', 170, plagY + 10)
         .text('Overall Similarity', 290, plagY + 10)
-        .text('Integrity Status', 410, plagY + 10);
+        .text('Integrity Status (<=15%)', 400, plagY + 10);
 
       doc.fontSize(12).font('Helvetica-Bold').fillColor(darkColor)
-        .text(`${codeSim}%`, 60, plagY + 24)
-        .text(`${reportSim}%`, 170, plagY + 24)
-        .text(`${overallSim}%`, 290, plagY + 24);
+        .text(isPlagScanned ? `${codeSim}%` : 'N/A', 60, plagY + 24)
+        .text(isPlagScanned ? `${reportSim}%` : 'N/A', 170, plagY + 24)
+        .text(isPlagScanned ? `${overallSim}%` : 'N/A', 290, plagY + 24);
 
-      doc.fillColor(statusColor).text(plagStatus, 410, plagY + 24);
+      doc.fillColor(statusColor).text(plagStatus, 400, plagY + 24);
 
       doc.y = plagY + 58;
 

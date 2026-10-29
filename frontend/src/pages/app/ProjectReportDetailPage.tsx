@@ -403,33 +403,102 @@ export const ProjectReportDetailPage: React.FC = () => {
       </Card>
 
       {/* 3. PLAGIARISM ANALYSIS */}
-      <Card className="p-6 sm:p-8 space-y-4 border-[#243047]">
-        <div className="flex items-center justify-between border-b border-[#1E293B] pb-3">
-          <h3 className="text-base font-bold text-[#F8FAFC] uppercase tracking-wider text-xs">
-            3. Multi-Modal Plagiarism & Similarity Screening
-          </h3>
-        </div>
+      {(() => {
+        const plag = evaluation.plagiarism;
+        const isScanned = Boolean(plag && (plag as any).isScanned !== false);
+        const overallSim = Number(plag?.overallSimilarity ?? 0);
+        const codeSim = Number(plag?.codeSimilarity ?? 0);
+        const reportSim = Number(plag?.reportSimilarity ?? 0);
+        const isDemo = Boolean(plag?.isDemoData);
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
-            <span className="text-xs font-semibold text-[#94A3B8] block">Source Code Similarity</span>
-            <span className="text-2xl font-bold text-emerald-400 mt-1 block">{evaluation.plagiarism.codeSimilarity}%</span>
-            <span className="text-[11px] text-[#94A3B8]">Syntax AST comparison</span>
-          </div>
+        const overallColor = overallSim <= 15 ? 'text-emerald-400' : overallSim <= 30 ? 'text-amber-400' : 'text-rose-400';
+        const codeColor = codeSim <= 15 ? 'text-emerald-400' : codeSim <= 30 ? 'text-amber-400' : 'text-rose-400';
+        const reportColor = reportSim <= 15 ? 'text-emerald-400' : reportSim <= 30 ? 'text-amber-400' : 'text-rose-400';
 
-          <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
-            <span className="text-xs font-semibold text-[#94A3B8] block">Project Report Similarity</span>
-            <span className="text-2xl font-bold text-emerald-400 mt-1 block">{evaluation.plagiarism.reportSimilarity}%</span>
-            <span className="text-[11px] text-[#94A3B8]">Academic corpus cross-match</span>
-          </div>
+        const classificationLabel = !isScanned
+          ? 'Not Scanned'
+          : overallSim <= 15
+            ? 'Clean'
+            : overallSim <= 30
+              ? 'Moderate Similarity'
+              : 'High Similarity';
 
-          <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
-            <span className="text-xs font-semibold text-[#94A3B8] block">Overall Similarity Classification</span>
-            <span className="text-2xl font-bold text-emerald-400 mt-1 block">Clean ({evaluation.plagiarism.overallSimilarity}%)</span>
-            <span className="text-[11px] text-[#94A3B8]">Below 15% institutional threshold</span>
-          </div>
-        </div>
-      </Card>
+        return (
+          <Card className="p-6 sm:p-8 space-y-4 border-[#243047]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#1E293B] pb-3 gap-2">
+              <h3 className="text-base font-bold text-[#F8FAFC] uppercase tracking-wider text-xs">
+                3. Multi-Modal Plagiarism & Similarity Screening
+              </h3>
+              {isDemo ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  DEMO SIMULATION — NOT A VERIFIED PLAGIARISM RESULT
+                </span>
+              ) : !isScanned ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-500/10 text-slate-300 border border-slate-500/30">
+                  <FileQuestion className="w-3.5 h-3.5 shrink-0" />
+                  AWAITING PLAGIARISM SCAN
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  VERIFIED SIMILARITY AUDIT
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
+                <span className="text-xs font-semibold text-[#94A3B8] block">Source Code Similarity</span>
+                {isScanned ? (
+                  <span className={`text-2xl font-bold mt-1 block ${codeColor}`}>{codeSim}%</span>
+                ) : (
+                  <span className="text-xl font-bold text-[#94A3B8] mt-1 block">Awaiting scan</span>
+                )}
+                <span className="text-[11px] text-[#94A3B8]">
+                  {isDemo ? 'Simulated AST syntax comparison' : 'Syntax AST comparison'}
+                </span>
+              </div>
+
+              <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
+                <span className="text-xs font-semibold text-[#94A3B8] block">Project Report Similarity</span>
+                {isScanned ? (
+                  <span className={`text-2xl font-bold mt-1 block ${reportColor}`}>{reportSim}%</span>
+                ) : (
+                  <span className="text-xl font-bold text-[#94A3B8] mt-1 block">Awaiting scan</span>
+                )}
+                <span className="text-[11px] text-[#94A3B8]">
+                  {isDemo ? 'Internal pattern match (no external corpus)' : 'Document structural & lexical match'}
+                </span>
+              </div>
+
+              <div className="p-4 bg-[#0F172A] rounded-xl border border-[#243047]">
+                <span className="text-xs font-semibold text-[#94A3B8] block">Overall Similarity Classification</span>
+                {isScanned ? (
+                  <span className={`text-2xl font-bold mt-1 block ${overallColor}`}>
+                    {classificationLabel} ({overallSim}%)
+                  </span>
+                ) : (
+                  <span className="text-xl font-bold text-[#94A3B8] mt-1 block">Not scanned</span>
+                )}
+                <span className="text-[11px] text-[#94A3B8]">
+                  {isScanned
+                    ? overallSim <= 15
+                      ? 'Within 15% institutional threshold'
+                      : 'Exceeds 15% institutional threshold'
+                    : 'Institutional threshold: 15%'}
+                </span>
+              </div>
+            </div>
+
+            {plag?.feedback && (
+              <p className="text-xs text-[#94A3B8] bg-[#0F172A]/80 p-3 rounded-lg border border-[#1E293B]">
+                <span className="font-semibold text-slate-300">Audit Scope Note:</span> {plag.feedback}
+              </p>
+            )}
+          </Card>
+        );
+      })()}
 
       {/* 4. AI EVALUATION SCORE & CRITERIA BREAKDOWN */}
       <Card className="p-6 sm:p-8 space-y-6 border-[#243047]">

@@ -11,7 +11,9 @@
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "seed:demo": "tsx scripts/seedPresentationDemo.ts",
+    "seed:demo:reset": "tsx scripts/seedPresentationDemo.ts --reset"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

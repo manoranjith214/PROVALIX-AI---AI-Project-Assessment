@@ -413,17 +413,31 @@ export const projectReportService = {
           ? Number(rawEval.totalScoreOutof100)
           : (row.score !== null && row.score !== undefined ? Number(row.score) : 0)));
 
+    const hasExplicitPlag = Boolean(
+      rawPlag && (
+        rawPlag.overallSimilarity !== undefined ||
+        rawPlag.codeSimilarity !== undefined ||
+        rawPlag.reportSimilarity !== undefined ||
+        rawPlag.status !== undefined ||
+        rawPlag.isDemoData !== undefined
+      )
+    );
+
+    const isPlagScanned = hasExplicitPlag || (row.similarity !== null && row.similarity !== undefined);
+
     const numSim = rawPlag.overallSimilarity !== undefined && rawPlag.overallSimilarity !== null
       ? Number(rawPlag.overallSimilarity)
       : (row.similarity !== null && row.similarity !== undefined ? Number(row.similarity) : 0);
 
     const codeSim = rawPlag.codeSimilarity !== undefined && rawPlag.codeSimilarity !== null
       ? Number(rawPlag.codeSimilarity)
-      : Math.max(0, Math.round(numSim * 0.8));
+      : (isPlagScanned ? Math.max(0, Math.round(numSim * 0.8)) : 0);
 
     const repSim = rawPlag.reportSimilarity !== undefined && rawPlag.reportSimilarity !== null
       ? Number(rawPlag.reportSimilarity)
-      : Math.max(0, Math.round(numSim * 1.2));
+      : (isPlagScanned ? Math.max(0, Math.round(numSim * 1.2)) : 0);
+
+    const isDemoPlag = Boolean(rawPlag.isDemoData ?? (rawEval.isDemoData || false));
 
     const getCriterion = (
       key: string,
@@ -467,7 +481,10 @@ export const projectReportService = {
         reportSimilarity: repSim,
         overallSimilarity: numSim,
         status: rawPlag.status || (numSim <= 15 ? 'Low' : numSim <= 30 ? 'Moderate' : 'High'),
-        isDemoData: false,
+        isDemoData: isDemoPlag,
+        isScanned: isPlagScanned,
+        feedback: rawPlag.feedback,
+        matchedSources: Array.isArray(rawPlag.matchedSources) ? rawPlag.matchedSources : [],
       },
       strengths: Array.isArray(rawEval.strengths) && rawEval.strengths.length > 0
         ? rawEval.strengths
